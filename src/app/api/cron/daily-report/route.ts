@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import OpenAI from 'openai'
 
+export const dynamic = 'force-dynamic'
 const deepseek = new OpenAI({
   apiKey: process.env.DEEPSEEK_API_KEY!,
   baseURL: 'https://api.deepseek.com/v1',
