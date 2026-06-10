@@ -7,6 +7,11 @@ import { Eye, EyeOff, Loader2, ShieldCheck } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import toast from 'react-hot-toast'
 
+
+export const dynamic = 'force-dynamic'
+
+export default function LoginPage() {
+
 export default function LoginPage() {
   const router = useRouter()
   const supabase = createClient()
