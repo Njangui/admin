@@ -2,21 +2,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import OpenAI from 'openai'
 
-export const dynamic = 'force-dynamic'
+const deepseek = new OpenAI({
+  apiKey: process.env.DEEPSEEK_API_KEY!,
+  baseURL: 'https://api.deepseek.com/v1',
+})
 
-export async function GET(req: NextRequest) {
-  const deepseek = new OpenAI({
-    apiKey: process.env.DEEPSEEK_API_KEY!,
-    baseURL: 'https://api.deepseek.com/v1',
-  })
-
-  const authHeader = req.headers.get('authorization')
-  const cronSecret = process.env.CRON_SECRET
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+export async function POST(req: NextRequest) {
+  const secret = req.headers.get('x-cron-secret')
+  if (secret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
-
-  // ... reste du fichier identique
 
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
