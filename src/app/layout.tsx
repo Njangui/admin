@@ -1,3 +1,4 @@
+import React from 'react'
 import type { Metadata } from 'next'
 import { ThemeProvider } from 'next-themes'
 import { Toaster } from 'react-hot-toast'
