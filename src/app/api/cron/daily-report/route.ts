@@ -7,9 +7,10 @@ const deepseek = new OpenAI({
   baseURL: 'https://api.deepseek.com/v1',
 })
 
-export async function POST(req: NextRequest) {
-  const secret = req.headers.get('x-cron-secret')
-  if (secret !== process.env.CRON_SECRET) {
+export async function GET(req: NextRequest) {
+  const authHeader = req.headers.get('authorization')
+  const cronSecret = process.env.CRON_SECRET
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
