@@ -3,12 +3,13 @@ import { createClient } from '@supabase/supabase-js'
 import OpenAI from 'openai'
 
 export const dynamic = 'force-dynamic'
-const deepseek = new OpenAI({
-  apiKey: process.env.DEEPSEEK_API_KEY!,
-  baseURL: 'https://api.deepseek.com/v1',
-})
 
 export async function POST(req: NextRequest) {
+  const deepseek = new OpenAI({
+    apiKey: process.env.DEEPSEEK_API_KEY!,
+    baseURL: 'https://api.deepseek.com/v1',
+  })
+
   const secret = req.headers.get('x-cron-secret')
   if (secret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
