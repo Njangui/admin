@@ -1,4 +1,5 @@
 'use client'
+import React from 'react'
 import { useState, useEffect } from 'react'
 import { Save, Loader2, RefreshCw, Bell, Shield, Zap } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
