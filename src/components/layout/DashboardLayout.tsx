@@ -1,10 +1,9 @@
 'use client'
-import React from 'react'
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname, useRouter } from 'next/navigation'
-import { LayoutDashboard, Home, Calendar, Users, UserCheck, Camera, DollarSign, MessageSquare, BarChart2, Settings, LogOut, Menu, Bell, Sun, Moon, FileText, ClipboardList } from 'lucide-react'
+import { LayoutDashboard, Home, Calendar, Users, UserCheck, Camera, DollarSign, MessageSquare, BarChart2, Settings, LogOut, Menu, Bell, Sun, Moon, FileText, ClipboardList, TrendingUp } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils/index'
@@ -16,6 +15,7 @@ const NAV = [
   { href:'/agents', label:'Agents', icon:UserCheck, badge:'agents' },
   { href:'/photographes', label:'Photographes', icon:Camera },
   { href:'/commissions', label:'Commissions', icon:DollarSign, badge:'commissions' },
+  { href:'/finance', label:'Finance', icon:TrendingUp },
   { href:'/utilisateurs', label:'Utilisateurs', icon:Users },
   { href:'/conversations', label:'Conversations', icon:MessageSquare, badge:'convs' },
   { href:'/contrats', label:'Contrats', icon:FileText },
