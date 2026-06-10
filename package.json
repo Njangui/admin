@@ -23,6 +23,7 @@
     "recharts": "^2.15.0",
     "tailwind-merge": "^2.5.4",
     "clsx": "^2.1.1"
+    "openai": "^4.67.0"
   },
   "devDependencies": {
     "@types/node": "^20.17.0",
