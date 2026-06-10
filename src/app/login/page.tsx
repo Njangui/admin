@@ -9,7 +9,6 @@ import toast from 'react-hot-toast'
 
 
 export const dynamic = 'force-dynamic'
-
 export default function LoginPage() {
 
 export default function LoginPage() {
