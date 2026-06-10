@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 
-export const dynamic = 'force-dynamic'
+const deepseek = new OpenAI({
+  apiKey: process.env.DEEPSEEK_API_KEY!,
+  baseURL: 'https://api.deepseek.com/v1',
+})
 
 export async function POST(req: NextRequest) {
-  const deepseek = new OpenAI({
-    apiKey: process.env.DEEPSEEK_API_KEY!,
-    baseURL: 'https://api.deepseek.com/v1',
-  })
-
   const { reports, date } = await req.json()
 
   const summary = reports.map((r: any) => {
