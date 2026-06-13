@@ -4,7 +4,8 @@ import Image from 'next/image'
 import { useSearchParams } from 'next/navigation'
 import {
   CheckCircle2, XCircle, ChevronDown, ChevronUp, Star, MapPin,
-  Phone, Loader2, Zap, ZapOff, Home
+  Phone, Loader2, Zap, ZapOff, ZoomIn, X, ChevronLeft, ChevronRight,
+  ShieldCheck, Camera,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { PageHeader, Badge, LoadingSpinner } from '@/components/ui/index'
@@ -23,6 +24,141 @@ const SL: Record<string, string> = {
   suspended: 'Suspendu', rejected: 'Rejeté',
 }
 
+// ── Lightbox pour prévisualiser les documents ─────────────────────────────────
+interface LightboxProps {
+  images: { url: string; label: string }[]
+  initialIndex?: number
+  onClose: () => void
+}
+
+function DocumentLightbox({ images, initialIndex = 0, onClose }: LightboxProps) {
+  const [idx, setIdx] = useState(initialIndex)
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+      if (e.key === 'ArrowRight') setIdx(i => Math.min(i + 1, images.length - 1))
+      if (e.key === 'ArrowLeft') setIdx(i => Math.max(i - 1, 0))
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [images.length, onClose])
+
+  const cur = images[idx]
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 p-4" onClick={onClose}>
+      <div className="relative max-w-2xl w-full" onClick={e => e.stopPropagation()}>
+
+        {/* Header lightbox */}
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-white font-semibold text-sm">{cur.label}</p>
+          <div className="flex items-center gap-2">
+            <span className="text-gray-400 text-xs">{idx + 1} / {images.length}</span>
+            <button onClick={onClose}
+              className="w-8 h-8 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors">
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+
+        {/* Image */}
+        <div className="relative bg-gray-900 rounded-2xl overflow-hidden" style={{ minHeight: 300, maxHeight: '70vh' }}>
+          <Image
+            src={cur.url}
+            alt={cur.label}
+            fill
+            className="object-contain"
+            sizes="(max-width: 768px) 100vw, 672px"
+            unoptimized
+          />
+        </div>
+
+        {/* Navigation */}
+        {images.length > 1 && (
+          <div className="flex items-center justify-center gap-4 mt-4">
+            <button onClick={() => setIdx(i => Math.max(i - 1, 0))}
+              disabled={idx === 0}
+              className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 text-white disabled:opacity-30 transition-colors">
+              <ChevronLeft size={18} />
+            </button>
+            <div className="flex gap-1.5">
+              {images.map((_, i) => (
+                <button key={i} onClick={() => setIdx(i)}
+                  className={cn('w-2 h-2 rounded-full transition-all',
+                    i === idx ? 'bg-white w-4' : 'bg-white/40')} />
+              ))}
+            </div>
+            <button onClick={() => setIdx(i => Math.min(i + 1, images.length - 1))}
+              disabled={idx === images.length - 1}
+              className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 text-white disabled:opacity-30 transition-colors">
+              <ChevronRight size={18} />
+            </button>
+          </div>
+        )}
+
+        {/* Lien téléchargement */}
+        <div className="mt-3 text-center">
+          <a href={cur.url} target="_blank" rel="noopener noreferrer"
+            className="text-xs text-gray-400 hover:text-white underline transition-colors">
+            Ouvrir en plein écran ↗
+          </a>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── DocumentCard ─────────────────────────────────────────────────────────────
+function DocumentCard({ url, label, icon, onZoom }: {
+  url: string; label: string; icon: React.ReactNode; onZoom: () => void
+}) {
+  const [imgError, setImgError] = useState(false)
+
+  return (
+    <div className="relative group rounded-2xl overflow-hidden bg-gray-100 dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 hover:border-[#f95d1e] transition-all cursor-pointer"
+      onClick={onZoom} style={{ minHeight: 160 }}>
+      {!imgError ? (
+        <Image
+          src={url}
+          alt={label}
+          fill
+          className="object-cover group-hover:scale-105 transition-transform duration-200"
+          sizes="(max-width: 640px) 100vw, 280px"
+          onError={() => setImgError(true)}
+          unoptimized
+        />
+      ) : (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-gray-400">
+          {icon}
+          <p className="text-xs">Impossible d&apos;afficher</p>
+          <a href={url} target="_blank" rel="noopener noreferrer"
+            className="text-xs text-[#f95d1e] hover:underline" onClick={e => e.stopPropagation()}>
+            Ouvrir le lien ↗
+          </a>
+        </div>
+      )}
+
+      {/* Overlay hover */}
+      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-center justify-center">
+        <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center shadow-lg">
+            <ZoomIn size={18} className="text-gray-800" />
+          </div>
+        </div>
+      </div>
+
+      {/* Label bas */}
+      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2">
+        <p className="text-white text-xs font-semibold flex items-center gap-1">
+          {icon} {label}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+// ── AgentsPage ────────────────────────────────────────────────────────────────
 export function AgentsPage() {
   const searchParams = useSearchParams()
   const supabase = createClient()
@@ -33,6 +169,7 @@ export function AgentsPage() {
   const [statusFilter, setStatusFilter] = useState(searchParams.get('status') ?? '')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [rejectReason, setRejectReason] = useState('')
+  const [lightbox, setLightbox] = useState<{ images: { url: string; label: string }[]; idx: number } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -54,39 +191,47 @@ export function AgentsPage() {
   async function validate(id: string) {
     setProcessing(id)
     const { data: { user } } = await supabase.auth.getUser()
-    await supabase.from('agents').update({ status: 'active', validated_by: user?.id, validated_at: new Date().toISOString() }).eq('id', id)
+    await supabase.from('agents').update({
+      status: 'active', validated_by: user?.id, validated_at: new Date().toISOString()
+    }).eq('id', id)
     await supabase.from('user_roles').upsert({ user_id: id, role: 'agent' }, { onConflict: 'user_id,role' })
-    await supabase.from('notifications').insert({ user_id: id, title: '🎉 Candidature acceptée !', body: 'Vous êtes maintenant agent certifié Habynex.', channel: 'in_app' })
-    toast.success('Agent validé ✅'); await load(); setProcessing(null)
+    await supabase.from('notifications').insert({
+      user_id: id, title: '🎉 Candidature acceptée !',
+      body: 'Vous êtes maintenant agent certifié Habynex.', channel: 'in_app',
+    })
+    toast.success('Agent validé ✅')
+    await load()
+    setProcessing(null)
   }
 
   async function reject(id: string) {
     if (!rejectReason.trim()) { toast.error('Indiquez la raison'); return }
     setProcessing(id)
     await supabase.from('agents').update({ status: 'rejected', rejection_reason: rejectReason }).eq('id', id)
-    await supabase.from('notifications').insert({ user_id: id, title: 'Candidature non retenue', body: `Raison : ${rejectReason}`, channel: 'in_app' })
-    toast('Rejeté et notifié', { icon: 'ℹ️' }); setRejectReason(''); setExpandedId(null); await load(); setProcessing(null)
+    await supabase.from('notifications').insert({
+      user_id: id, title: 'Candidature non retenue',
+      body: `Raison : ${rejectReason}`, channel: 'in_app',
+    })
+    toast('Rejeté et notifié', { icon: 'ℹ️' })
+    setRejectReason('')
+    setExpandedId(null)
+    await load()
+    setProcessing(null)
   }
 
   async function suspend(id: string) {
     await supabase.from('agents').update({ status: 'suspended' }).eq('id', id)
     await supabase.from('user_roles').delete().eq('user_id', id).eq('role', 'agent')
-    toast('Agent suspendu', { icon: '⚠️' }); await load()
+    toast('Agent suspendu', { icon: '⚠️' })
+    await load()
   }
 
-  // ── Toggle publication directe ──────────────────────────────────────────────
   async function toggleAutoPublish(agent: any) {
     const newVal = !agent.can_auto_publish
     setTogglingPublish(agent.id)
     try {
-      const { error } = await supabase.from('agents')
-        .update({ can_auto_publish: newVal })
-        .eq('id', agent.id)
+      const { error } = await supabase.from('agents').update({ can_auto_publish: newVal }).eq('id', agent.id)
       if (error) throw error
-
-      const p = Array.isArray(agent.profile) ? agent.profile[0] : agent.profile
-
-      // Notifier l'agent
       await supabase.from('notifications').insert({
         user_id: agent.id,
         title: newVal ? '⚡ Publication directe activée' : '🔒 Publication directe désactivée',
@@ -95,12 +240,7 @@ export function AgentsPage() {
           : 'Vos prochaines annonces devront à nouveau passer par la validation admin.',
         channel: 'in_app',
       })
-
-      toast.success(
-        newVal
-          ? `⚡ Publication directe accordée à ${p?.full_name ?? 'l\'agent'}`
-          : `🔒 Publication directe retirée à ${p?.full_name ?? 'l\'agent'}`
-      )
+      toast.success(newVal ? 'Publication directe activée ⚡' : 'Publication directe désactivée')
       await load()
     } catch {
       toast.error('Erreur lors de la modification')
@@ -109,11 +249,34 @@ export function AgentsPage() {
     }
   }
 
+  // Construire la liste d'images pour la lightbox
+  function buildDocImages(agent: any): { url: string; label: string }[] {
+    const imgs: { url: string; label: string }[] = []
+    if (agent.id_document_url) {
+      const parts = agent.id_document_url.split('|||').filter(Boolean)
+      parts.forEach((url: string, i: number) => {
+        imgs.push({ url: url.trim(), label: i === 0 ? '🪪 CNI / Passeport — Recto' : '🪪 CNI / Passeport — Verso' })
+      })
+    }
+    if (agent.selfie_url) {
+      imgs.push({ url: agent.selfie_url, label: '🤳 Selfie de vérification' })
+    }
+    return imgs
+  }
+
   return (
     <div className="space-y-5">
+      {lightbox && (
+        <DocumentLightbox
+          images={lightbox.images}
+          initialIndex={lightbox.idx}
+          onClose={() => setLightbox(null)}
+        />
+      )}
+
       <PageHeader title="Agents" subtitle="Gestion des agents terrain" />
 
-      {/* Filtres statut */}
+      {/* Filtres */}
       <div className="flex gap-2 flex-wrap">
         {[{ value: '', label: 'Tous' }, ...Object.entries(SL).map(([v, l]) => ({ value: v, label: l }))].map(opt => (
           <button key={opt.value} onClick={() => setStatusFilter(opt.value)}
@@ -137,6 +300,7 @@ export function AgentsPage() {
             const p = Array.isArray(a.profile) ? a.profile[0] : a.profile
             const n = Array.isArray(a.neighborhood) ? a.neighborhood[0] : a.neighborhood
             const isExp = expandedId === a.id
+            const docImages = buildDocImages(a)
 
             return (
               <div key={a.id} className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 overflow-hidden">
@@ -159,10 +323,15 @@ export function AgentsPage() {
                             : 'bg-purple-100 text-purple-600 dark:bg-purple-950/30 dark:text-purple-400')}>
                           Modèle {a.commission_model}
                         </span>
-                        {/* Badge publication directe */}
                         {a.can_auto_publish && (
                           <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-[#f95d1e]/10 text-[#f95d1e] flex items-center gap-1">
                             <Zap size={9} /> Publication directe
+                          </span>
+                        )}
+                        {/* Badge documents soumis */}
+                        {docImages.length > 0 && (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 flex items-center gap-1">
+                            <ShieldCheck size={9} /> {docImages.length} doc{docImages.length > 1 ? 's' : ''}
                           </span>
                         )}
                       </div>
@@ -176,7 +345,6 @@ export function AgentsPage() {
                   </div>
 
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    {/* Bouton validation rapide */}
                     {a.status === 'pending' && (
                       <button onClick={() => validate(a.id)} disabled={processing === a.id}
                         className="w-8 h-8 flex items-center justify-center rounded-xl bg-green-100 dark:bg-green-950/30 text-green-600 hover:bg-green-200 transition-colors disabled:opacity-50">
@@ -200,7 +368,77 @@ export function AgentsPage() {
                 {isExp && (
                   <div className="px-5 pb-5 border-t border-gray-100 dark:border-gray-800 pt-4 space-y-5 animate-fade-in">
 
-                    {/* ── PERMISSION PUBLICATION DIRECTE ── */}
+                    {/* ── DOCUMENTS — Visualisation images ── */}
+                    {docImages.length > 0 && (
+                      <div>
+                        <div className="flex items-center gap-2 mb-3">
+                          <ShieldCheck size={15} className="text-[#f95d1e]" />
+                          <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
+                            Documents d&apos;identité
+                          </p>
+                          <span className="text-[10px] bg-amber-100 text-amber-600 dark:bg-amber-950/30 dark:text-amber-400 px-2 py-0.5 rounded-full font-medium">
+                            Cliquez pour agrandir
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                          {/* CNI recto/verso */}
+                          {a.id_document_url?.split('|||').filter(Boolean).map((url: string, i: number) => (
+                            <DocumentCard
+                              key={`id-${i}`}
+                              url={url.trim()}
+                              label={i === 0 ? 'CNI Recto' : 'CNI Verso'}
+                              icon={<ShieldCheck size={12} />}
+                              onZoom={() => setLightbox({
+                                images: docImages,
+                                idx: i,
+                              })}
+                            />
+                          ))}
+
+                          {/* Selfie */}
+                          {a.selfie_url && (
+                            <DocumentCard
+                              url={a.selfie_url}
+                              label="Selfie de vérification"
+                              icon={<Camera size={12} />}
+                              onZoom={() => setLightbox({
+                                images: docImages,
+                                idx: docImages.findIndex(d => d.url === a.selfie_url),
+                              })}
+                            />
+                          )}
+                        </div>
+
+                        {/* Bouton "Voir tous les documents" */}
+                        {docImages.length > 1 && (
+                          <button
+                            onClick={() => setLightbox({ images: docImages, idx: 0 })}
+                            className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 border border-gray-200 dark:border-gray-700 rounded-xl text-sm text-gray-600 dark:text-gray-400 hover:border-[#f95d1e] hover:text-[#f95d1e] transition-colors font-medium">
+                            <ZoomIn size={14} /> Voir tous les documents ({docImages.length})
+                          </button>
+                        )}
+
+                        {/* Message de comparaison */}
+                        <div className="mt-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/50 rounded-xl px-4 py-3">
+                          <p className="text-xs text-amber-700 dark:text-amber-400 flex items-start gap-2">
+                            <span className="text-base leading-none">💡</span>
+                            <span>Vérifiez que le visage sur le selfie correspond bien à la photo sur la CNI/passeport avant de valider.</span>
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Aucun document soumis */}
+                    {docImages.length === 0 && (
+                      <div className="bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800/50 rounded-xl px-4 py-3">
+                        <p className="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
+                          ⚠️ Aucun document soumis par cet agent.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* ── PUBLICATION DIRECTE ── */}
                     {a.status === 'active' && (
                       <div className="bg-gray-50 dark:bg-gray-800 rounded-2xl p-4">
                         <div className="flex items-start justify-between gap-4">
@@ -211,19 +449,15 @@ export function AgentsPage() {
                             </div>
                             <p className="text-xs text-gray-400 leading-relaxed">
                               {a.can_auto_publish
-                                ? 'Cet agent peut publier des annonces directement sans validation. Désactivez pour repasser en mode validation.'
-                                : 'Activez pour permettre à cet agent de publier ses annonces immédiatement sans passer par la validation admin.'}
+                                ? 'Cet agent peut publier des annonces directement sans validation.'
+                                : 'Activez pour permettre à cet agent de publier ses annonces immédiatement.'}
                             </p>
                           </div>
-                          <button
-                            onClick={() => toggleAutoPublish(a)}
-                            disabled={togglingPublish === a.id}
-                            className={cn(
-                              'flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all flex-shrink-0 disabled:opacity-50',
+                          <button onClick={() => toggleAutoPublish(a)} disabled={togglingPublish === a.id}
+                            className={cn('flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all flex-shrink-0 disabled:opacity-50',
                               a.can_auto_publish
                                 ? 'bg-red-50 dark:bg-red-950/20 text-red-500 hover:bg-red-100 border border-red-200 dark:border-red-800'
-                                : 'bg-[#f95d1e] text-white hover:bg-[#e04d0e] shadow-sm shadow-[#f95d1e]/30'
-                            )}>
+                                : 'bg-[#f95d1e] text-white hover:bg-[#e04d0e] shadow-sm shadow-[#f95d1e]/30')}>
                             {togglingPublish === a.id
                               ? <Loader2 size={14} className="animate-spin" />
                               : a.can_auto_publish
@@ -234,7 +468,7 @@ export function AgentsPage() {
                       </div>
                     )}
 
-                    {/* Réponses questionnaire */}
+                    {/* ── RÉPONSES QUESTIONNAIRE ── */}
                     {a.application_answers && Object.keys(a.application_answers).length > 0 && (
                       <div>
                         <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Réponses questionnaire</p>
@@ -249,35 +483,14 @@ export function AgentsPage() {
                       </div>
                     )}
 
-                    {/* Documents */}
-                    {(a.id_document_url || a.selfie_url) && (
-                      <div>
-                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Documents</p>
-                        <div className="flex gap-3 flex-wrap">
-                          {a.id_document_url?.split('|||').map((url: string, i: number) => (
-                            <a key={i} href={url} target="_blank" rel="noopener noreferrer"
-                              className="px-3 py-2 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-xl text-xs text-blue-600 dark:text-blue-400 hover:underline">
-                              📄 {i === 0 ? 'CNI Recto' : 'CNI Verso'}
-                            </a>
-                          ))}
-                          {a.selfie_url && (
-                            <a href={a.selfie_url} target="_blank" rel="noopener noreferrer"
-                              className="px-3 py-2 bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 rounded-xl text-xs text-purple-600 dark:text-purple-400 hover:underline">
-                              🤳 Selfie
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Décision candidature */}
+                    {/* ── DÉCISION ── */}
                     {(a.status === 'pending' || a.status === 'reviewing') && (
                       <div className="space-y-3">
                         <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Décision</p>
                         <div className="flex gap-3">
                           <button onClick={() => validate(a.id)} disabled={processing === a.id}
                             className="flex-1 flex items-center justify-center gap-2 py-3 bg-green-500 hover:bg-green-600 text-white font-semibold rounded-2xl text-sm transition-colors disabled:opacity-50">
-                            <CheckCircle2 size={15} /> Valider
+                            <CheckCircle2 size={15} /> Valider l&apos;agent
                           </button>
                           <div className="flex-1 space-y-2">
                             <input value={rejectReason} onChange={e => setRejectReason(e.target.value)}
