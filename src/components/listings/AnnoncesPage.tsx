@@ -10,6 +10,7 @@ import { createClient } from '@/lib/supabase/client'
 import { PageHeader, Badge, LoadingSpinner } from '@/components/ui/index'
 import { formatPrice, formatDate, cn } from '@/lib/utils/index'
 import toast from 'react-hot-toast'
+import { FaqEditor } from '@/components/faq/FaqEditor'
 
 const STATUS_COLORS: Record<string, string> = {
   draft:          'bg-gray-100 text-gray-500 dark:bg-gray-800',
@@ -43,6 +44,7 @@ export function AnnoncesPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [rejectModal, setRejectModal] = useState<{ id: string; agentId: string | null } | null>(null)
   const [rejectReason, setRejectReason] = useState('')
+  const [faqListing, setFaqListing] = useState<{ id: string; title: string } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -72,7 +74,6 @@ export function AnnoncesPage() {
       published_at: new Date().toISOString(),
     }).eq('id', listing.id)
 
-    // Notifier l'agent
     if (listing.submitted_by_agent) {
       await supabase.from('notifications').insert({
         user_id: listing.submitted_by_agent,
@@ -102,7 +103,6 @@ export function AnnoncesPage() {
         rejection_reason: rejectReason.trim(),
       }).eq('id', rejectModal.id)
 
-      // Notifier l'agent
       if (rejectModal.agentId) {
         const listing = listings.find(l => l.id === rejectModal.id)
         await supabase.from('notifications').insert({
@@ -210,6 +210,14 @@ export function AnnoncesPage() {
 
                   {/* Actions rapides */}
                   <div className="flex items-center gap-1.5 flex-shrink-0">
+                    {/* Bouton FAQ */}
+                    <button
+                      onClick={() => setFaqListing({ id: l.id, title: l.title })}
+                      className="flex items-center gap-1 px-2.5 py-1.5 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-medium text-gray-600 dark:text-gray-400 hover:border-[#f95d1e] hover:text-[#f95d1e] transition-colors"
+                    >
+                      🤖 FAQ
+                    </button>
+
                     {l.slug && (
                       <a href={`${process.env.NEXT_PUBLIC_MAIN_APP_URL ?? ''}/bien/${l.slug}`}
                         target="_blank" rel="noopener noreferrer"
@@ -328,6 +336,19 @@ export function AnnoncesPage() {
         </div>
       )}
 
+      {/* ── Modale FAQ ── */}
+      {faqListing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto p-6 shadow-2xl">
+            <FaqEditor
+              listingId={faqListing.id}
+              listingTitle={faqListing.title}
+              onClose={() => setFaqListing(null)}
+            />
+          </div>
+        </div>
+      )}
+
       {/* ── Modale refus ── */}
       {rejectModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setRejectModal(null)}>
@@ -335,7 +356,7 @@ export function AnnoncesPage() {
           <div className="relative bg-white dark:bg-gray-900 rounded-3xl shadow-2xl p-6 w-full max-w-md space-y-4"
             onClick={e => e.stopPropagation()}>
             <h3 className="font-bold text-gray-800 dark:text-white text-lg">Refuser cette annonce</h3>
-            <p className="text-sm text-gray-500">L'agent sera notifié avec la raison du refus.</p>
+            <p className="text-sm text-gray-500">L&apos;agent sera notifié avec la raison du refus.</p>
             <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)}
               placeholder="Ex: Photos de mauvaise qualité, prix non conforme au marché, informations insuffisantes…"
               rows={4}
