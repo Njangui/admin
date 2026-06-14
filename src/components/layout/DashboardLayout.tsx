@@ -18,6 +18,7 @@ const NAV = [
   { href:'/finance', label:'Finance', icon:TrendingUp },
   { href:'/utilisateurs', label:'Utilisateurs', icon:Users },
   { href:'/conversations', label:'Conversations', icon:MessageSquare, badge:'convs' },
+  { href: '/groupe', label: 'Groupe Habynex', icon: MessageSquare },
   { href:'/agent-commercial', label:'Agent Commercial', icon:Bot },
   { href:'/contrats', label:'Contrats', icon:FileText },
   { href:'/rapports-terrain', label:'Rapports terrain', icon:ClipboardList },
