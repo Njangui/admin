@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Home, Users, Calendar, DollarSign, Clock, AlertCircle, Sparkles, FileText } from 'lucide-react'
+import { Home, Users, Calendar, DollarSign, Clock, AlertCircle, Sparkles, FileText, Eye } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { StatCard, LoadingSpinner } from '@/components/ui/index'
 import { formatPrice, formatDate, cn } from '@/lib/utils/index'
@@ -14,6 +14,7 @@ interface Stats {
   activeAgents: number; pendingAgents: number
   commissionsDue: number; commissionsAmount: number
   escalatedConvs: number
+  visitsToday: number; uniqueVisitorsToday: number
 }
 
 export function DashboardOverview() {
@@ -44,6 +45,7 @@ export function DashboardOverview() {
       { data: latestReport },
       { data: recentListings },
       { data: recentBookings },
+      { data: visitsToday },
     ] = await Promise.all([
       supabase.from('listings').select('id', { count: 'exact', head: true }).eq('status', 'pending_review'),
       supabase.from('listings').select('id', { count: 'exact', head: true }).eq('status', 'published'),
@@ -59,6 +61,7 @@ export function DashboardOverview() {
       supabase.from('daily_reports').select('*').order('report_date', { ascending: false }).limit(1),
       supabase.from('listings').select('id, title, created_at').eq('status', 'pending_review').order('created_at', { ascending: false }).limit(4),
       supabase.from('visit_bookings').select('id, nb_listings, created_at').eq('status', 'paid').order('created_at', { ascending: false }).limit(3),
+      supabase.from('site_visits').select('visitor_id').gte('created_at', `${today}T00:00:00`).limit(5000),
     ])
 
     setStats({
@@ -73,6 +76,8 @@ export function DashboardOverview() {
       commissionsDue: commissionsDue ?? 0,
       commissionsAmount: (commAmt ?? []).reduce((s: number, c: any) => s + (c.total_commission ?? 0), 0),
       escalatedConvs: escalatedConvs ?? 0,
+      visitsToday: (visitsToday ?? []).length,
+      uniqueVisitorsToday: new Set((visitsToday ?? []).map((v: any) => v.visitor_id)).size,
     })
 
     if (latestReport?.[0]) setReport(latestReport[0] as DailyReport)
@@ -101,6 +106,21 @@ export function DashboardOverview() {
         <StatCard title="Visites payées" value={stats.bookingsPaid} sub={`${stats.totalBookings} total`} icon={Calendar} color="bg-[#f95d1e]" />
         <StatCard title="Commissions dues" value={formatPrice(stats.commissionsAmount, true)} sub={`${stats.commissionsDue} à collecter`} icon={DollarSign} color="bg-green-500" />
       </div>
+
+      {/* Visiteurs du jour */}
+      <button onClick={() => router.push('/utilisateurs')}
+        className="w-full text-left bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 p-4 flex items-center gap-4 hover:shadow-sm transition-shadow">
+        <div className="w-10 h-10 rounded-xl bg-cyan-500 flex items-center justify-center flex-shrink-0">
+          <Eye size={18} className="text-white" />
+        </div>
+        <div className="flex-1">
+          <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+            {stats.visitsToday} page{stats.visitsToday > 1 ? 's' : ''} vue{stats.visitsToday > 1 ? 's' : ''} aujourd&apos;hui
+          </p>
+          <p className="text-xs text-gray-400">{stats.uniqueVisitorsToday} visiteur{stats.uniqueVisitorsToday > 1 ? 's' : ''} unique{stats.uniqueVisitorsToday > 1 ? 's' : ''} (inscrits + anonymes)</p>
+        </div>
+        <span className="text-xs font-semibold text-[#f95d1e]">Voir les détails →</span>
+      </button>
 
       {/* Alertes */}
       {(stats.pendingListings > 0 || stats.bookingsPaid > 0 || stats.pendingAgents > 0 || stats.escalatedConvs > 0) && (
