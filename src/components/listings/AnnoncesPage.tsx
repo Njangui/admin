@@ -4,13 +4,15 @@ import Image from 'next/image'
 import { useSearchParams } from 'next/navigation'
 import {
   CheckCircle2, XCircle, Trash2, Search, ExternalLink,
-  Loader2, MapPin, ChevronDown, ChevronUp, User, Phone
+  Loader2, MapPin, ChevronDown, ChevronUp, User, Phone, Pencil
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { PageHeader, Badge, LoadingSpinner } from '@/components/ui/index'
 import { formatPrice, formatDate, cn } from '@/lib/utils/index'
 import toast from 'react-hot-toast'
 import { FaqEditor } from '@/components/faq/FaqEditor'
+import { EditListingModal } from '@/components/listings/EditListingModal'
+import { AnnoncesAnalytics } from '@/components/listings/AnnoncesAnalytics'
 
 const STATUS_COLORS: Record<string, string> = {
   draft:          'bg-gray-100 text-gray-500 dark:bg-gray-800',
@@ -45,11 +47,12 @@ export function AnnoncesPage() {
   const [rejectModal, setRejectModal] = useState<{ id: string; agentId: string | null } | null>(null)
   const [rejectReason, setRejectReason] = useState('')
   const [faqListing, setFaqListing] = useState<{ id: string; title: string } | null>(null)
+  const [editListing, setEditListing] = useState<any | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     let q = supabase.from('listings').select(`
-      id, slug, title, type, transaction, price, price_negotiable, status,
+      id, slug, title, description, type, transaction, price, price_negotiable, status,
       published_at, created_at, address_hint, lat, lng,
       bedrooms, bathrooms, surface_m2, furnished,
       owner_name, owner_phone, amenities,
@@ -138,6 +141,8 @@ export function AnnoncesPage() {
         title="Annonces"
         subtitle={`${listings.length} annonces${pending > 0 ? ` · ${pending} en attente` : ''}`}
       />
+
+      <AnnoncesAnalytics />
 
       {/* Alerte annonces en attente */}
       {pending > 0 && !statusFilter && (
@@ -237,6 +242,10 @@ export function AnnoncesPage() {
                         </button>
                       </>
                     )}
+                    <button onClick={() => setEditListing(l)} disabled={processing === l.id}
+                      className="w-8 h-8 flex items-center justify-center rounded-xl text-gray-400 hover:text-[#f95d1e] hover:bg-orange-50 dark:hover:bg-orange-950/20 transition-colors disabled:opacity-40">
+                      <Pencil size={13} />
+                    </button>
                     <button onClick={() => handleDelete(l.id)} disabled={processing === l.id}
                       className="w-8 h-8 flex items-center justify-center rounded-xl text-gray-300 hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors disabled:opacity-40">
                       <Trash2 size={13} />
@@ -334,6 +343,15 @@ export function AnnoncesPage() {
             )
           })}
         </div>
+      )}
+
+      {/* ── Modale édition ── */}
+      {editListing && (
+        <EditListingModal
+          listing={editListing}
+          onClose={() => setEditListing(null)}
+          onSaved={load}
+        />
       )}
 
       {/* ── Modale FAQ ── */}
