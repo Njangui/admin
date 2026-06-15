@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { PageHeader, Badge, LoadingSpinner } from '@/components/ui/index'
 import { formatDate, cn } from '@/lib/utils/index'
 import toast from 'react-hot-toast'
+import { VisiteursTab } from '@/components/users/VisiteursTab'
 
 const ROLE_COLORS: Record<string,string> = {
   user: 'bg-gray-100 text-gray-500 dark:bg-gray-800',
@@ -22,6 +23,7 @@ export function UtilisateursPage() {
   const [search, setSearch] = useState('')
   const [expandedId, setExpandedId] = useState<string|null>(null)
   const [notifText, setNotifText] = useState('')
+  const [tab, setTab] = useState<'inscrits' | 'visiteurs'>('inscrits')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -91,8 +93,25 @@ export function UtilisateursPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Utilisateurs" subtitle={`${users.length} utilisateurs inscrits`} />
+      <PageHeader title="Utilisateurs"
+        subtitle={tab === 'inscrits' ? `${users.length} utilisateurs inscrits` : 'Visiteurs du site et analytics'} />
 
+      {/* Onglets */}
+      <div className="flex gap-2 border-b border-gray-100 dark:border-gray-800">
+        <button onClick={() => setTab('inscrits')}
+          className={cn('px-4 py-2.5 text-sm font-semibold border-b-2 -mb-px transition-colors',
+            tab === 'inscrits' ? 'border-[#f95d1e] text-[#f95d1e]' : 'border-transparent text-gray-400 hover:text-gray-600')}>
+          Inscrits
+        </button>
+        <button onClick={() => setTab('visiteurs')}
+          className={cn('px-4 py-2.5 text-sm font-semibold border-b-2 -mb-px transition-colors',
+            tab === 'visiteurs' ? 'border-[#f95d1e] text-[#f95d1e]' : 'border-transparent text-gray-400 hover:text-gray-600')}>
+          Visiteurs
+        </button>
+      </div>
+
+      {tab === 'visiteurs' ? <VisiteursTab /> : (
+      <>
       <div className="relative">
         <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
         <input type="text" placeholder="Rechercher par nom, téléphone, code parrainage…"
@@ -180,6 +199,8 @@ export function UtilisateursPage() {
             )
           })}
         </div>
+      )}
+      </>
       )}
     </div>
   )
