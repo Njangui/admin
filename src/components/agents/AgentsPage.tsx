@@ -170,6 +170,47 @@ export function AgentsPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [rejectReason, setRejectReason] = useState('')
   const [lightbox, setLightbox] = useState<{ images: { url: string; label: string }[]; idx: number } | null>(null)
+  // Map<agentId, { front?: string; back?: string; selfie?: string }> — signed URLs
+  const [signedUrls, setSignedUrls] = useState<Record<string, Record<string, string>>>({})
+
+  /** Extrait le path Supabase à partir d'une URL publique ou signée */
+  function extractPath(url: string): string | null {
+    try {
+      const u = new URL(url)
+      // URL publique : /storage/v1/object/public/agent-documents/<path>
+      // URL signée  : /storage/v1/object/sign/agent-documents/<path>
+      const match = u.pathname.match(/\/storage\/v1\/object\/(?:public|sign)\/agent-documents\/(.+)/)
+      return match ? decodeURIComponent(match[1].split('?')[0]) : null
+    } catch { return null }
+  }
+
+  /** Génère les signed URLs pour tous les agents chargés */
+  async function resolveSignedUrls(agents: any[]) {
+    const result: Record<string, Record<string, string>> = {}
+    await Promise.all(agents.map(async (a) => {
+      const map: Record<string, string> = {}
+      const rawUrls: { key: string; url: string }[] = []
+
+      if (a.id_document_url) {
+        a.id_document_url.split('|||').filter(Boolean).forEach((url: string, i: number) => {
+          rawUrls.push({ key: i === 0 ? 'front' : 'back', url: url.trim() })
+        })
+      }
+      if (a.selfie_url) rawUrls.push({ key: 'selfie', url: a.selfie_url })
+
+      await Promise.all(rawUrls.map(async ({ key, url }) => {
+        const path = extractPath(url)
+        if (!path) { map[key] = url; return }
+        const { data } = await supabase.storage
+          .from('agent-documents')
+          .createSignedUrl(path, 3600) // valide 1h
+        map[key] = data?.signedUrl ?? url
+      }))
+
+      result[a.id] = map
+    }))
+    setSignedUrls(result)
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -182,8 +223,11 @@ export function AgentsPage() {
     `).order('created_at', { ascending: false })
     if (statusFilter) q = q.eq('status', statusFilter)
     const { data } = await q
-    setAgents(data ?? [])
+    const loaded = data ?? []
+    setAgents(loaded)
     setLoading(false)
+    // Résoudre les URLs signées en arrière-plan
+    resolveSignedUrls(loaded)
   }, [statusFilter])
 
   useEffect(() => { load() }, [load])
@@ -249,17 +293,20 @@ export function AgentsPage() {
     }
   }
 
-  // Construire la liste d'images pour la lightbox
+  // Construire la liste d'images pour la lightbox (avec signed URLs si disponibles)
   function buildDocImages(agent: any): { url: string; label: string }[] {
     const imgs: { url: string; label: string }[] = []
+    const signed = signedUrls[agent.id] ?? {}
+
     if (agent.id_document_url) {
       const parts = agent.id_document_url.split('|||').filter(Boolean)
-      parts.forEach((url: string, i: number) => {
-        imgs.push({ url: url.trim(), label: i === 0 ? '🪪 CNI / Passeport — Recto' : '🪪 CNI / Passeport — Verso' })
+      parts.forEach((rawUrl: string, i: number) => {
+        const resolvedUrl = i === 0 ? (signed.front ?? rawUrl.trim()) : (signed.back ?? rawUrl.trim())
+        imgs.push({ url: resolvedUrl, label: i === 0 ? '🪪 CNI / Passeport — Recto' : '🪪 CNI / Passeport — Verso' })
       })
     }
     if (agent.selfie_url) {
-      imgs.push({ url: agent.selfie_url, label: '🤳 Selfie de vérification' })
+      imgs.push({ url: signed.selfie ?? agent.selfie_url, label: '🤳 Selfie de vérification' })
     }
     return imgs
   }
@@ -383,31 +430,38 @@ export function AgentsPage() {
 
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                           {/* CNI recto/verso */}
-                          {a.id_document_url?.split('|||').filter(Boolean).map((url: string, i: number) => (
-                            <DocumentCard
-                              key={`id-${i}`}
-                              url={url.trim()}
-                              label={i === 0 ? 'CNI Recto' : 'CNI Verso'}
-                              icon={<ShieldCheck size={12} />}
-                              onZoom={() => setLightbox({
-                                images: docImages,
-                                idx: i,
-                              })}
-                            />
-                          ))}
+                          {a.id_document_url?.split('|||').filter(Boolean).map((rawUrl: string, i: number) => {
+                            const s = signedUrls[a.id] ?? {}
+                            const resolvedUrl = i === 0 ? (s.front ?? rawUrl.trim()) : (s.back ?? rawUrl.trim())
+                            return (
+                              <DocumentCard
+                                key={`id-${i}`}
+                                url={resolvedUrl}
+                                label={i === 0 ? 'CNI Recto' : 'CNI Verso'}
+                                icon={<ShieldCheck size={12} />}
+                                onZoom={() => setLightbox({
+                                  images: docImages,
+                                  idx: i,
+                                })}
+                              />
+                            )
+                          })}
 
                           {/* Selfie */}
-                          {a.selfie_url && (
-                            <DocumentCard
-                              url={a.selfie_url}
-                              label="Selfie de vérification"
-                              icon={<Camera size={12} />}
-                              onZoom={() => setLightbox({
-                                images: docImages,
-                                idx: docImages.findIndex(d => d.url === a.selfie_url),
-                              })}
-                            />
-                          )}
+                          {a.selfie_url && (() => {
+                            const selfieResolved = (signedUrls[a.id] ?? {}).selfie ?? a.selfie_url
+                            return (
+                              <DocumentCard
+                                url={selfieResolved}
+                                label="Selfie de vérification"
+                                icon={<Camera size={12} />}
+                                onZoom={() => setLightbox({
+                                  images: docImages,
+                                  idx: docImages.findIndex(d => d.url === selfieResolved),
+                                })}
+                              />
+                            )
+                          })()}
                         </div>
 
                         {/* Bouton "Voir tous les documents" */}
