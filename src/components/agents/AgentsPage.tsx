@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import Image from 'next/image'
 import { useSearchParams } from 'next/navigation'
 import {
@@ -114,20 +114,38 @@ function DocumentCard({ url, label, icon, onZoom }: {
   url: string; label: string; icon: React.ReactNode; onZoom: () => void
 }) {
   const [imgError, setImgError] = useState(false)
+  const [imgLoaded, setImgLoaded] = useState(false)
+
+  // Reset état si l'URL change (ex: signed URL résolue après coup)
+  const prevUrl = useRef(url)
+  if (prevUrl.current !== url) {
+    prevUrl.current = url
+    if (imgError) setImgError(false)
+    if (imgLoaded) setImgLoaded(false)
+  }
 
   return (
     <div className="relative group rounded-2xl overflow-hidden bg-gray-100 dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 hover:border-[#f95d1e] transition-all cursor-pointer"
       onClick={onZoom} style={{ minHeight: 160 }}>
       {!imgError ? (
-        <Image
-          src={url}
-          alt={label}
-          fill
-          className="object-cover group-hover:scale-105 transition-transform duration-200"
-          sizes="(max-width: 640px) 100vw, 280px"
-          onError={() => setImgError(true)}
-          unoptimized
-        />
+        <>
+          {!imgLoaded && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-gray-400 animate-pulse">
+              {icon}
+              <p className="text-xs">Chargement…</p>
+            </div>
+          )}
+          <Image
+            src={url}
+            alt={label}
+            fill
+            className={`object-cover group-hover:scale-105 transition-transform duration-200 ${imgLoaded ? 'opacity-100' : 'opacity-0'}`}
+            sizes="(max-width: 640px) 100vw, 280px"
+            onLoad={() => setImgLoaded(true)}
+            onError={() => setImgError(true)}
+            unoptimized
+          />
+        </>
       ) : (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-gray-400">
           {icon}
@@ -173,14 +191,17 @@ export function AgentsPage() {
   // Map<agentId, { front?: string; back?: string; selfie?: string }> — signed URLs
   const [signedUrls, setSignedUrls] = useState<Record<string, Record<string, string>>>({})
 
-  /** Extrait le path Supabase à partir d'une URL publique ou signée */
-  function extractPath(url: string): string | null {
+  /** Extrait le bucket et le path Supabase à partir d'une URL publique ou signée */
+  function extractBucketAndPath(url: string): { bucket: string; path: string } | null {
     try {
       const u = new URL(url)
-      // URL publique : /storage/v1/object/public/verification-documents/<path>
-      // URL signée  : /storage/v1/object/sign/verification-documents/<path>
-      const match = u.pathname.match(/\/storage\/v1\/object\/(?:public|sign)\/verification-documents\/(.+)/)
-      return match ? decodeURIComponent(match[1].split('?')[0]) : null
+      // URL publique : /storage/v1/object/public/<bucket>/<path>
+      const pubMatch = u.pathname.match(/\/storage\/v1\/object\/public\/([^/]+)\/(.+)/)
+      if (pubMatch) return { bucket: pubMatch[1], path: decodeURIComponent(pubMatch[2].split('?')[0]) }
+      // URL signée : /storage/v1/object/sign/<bucket>/<path>
+      const signMatch = u.pathname.match(/\/storage\/v1\/object\/sign\/([^/]+)\/(.+)/)
+      if (signMatch) return { bucket: signMatch[1], path: decodeURIComponent(signMatch[2].split('?')[0]) }
+      return null
     } catch { return null }
   }
 
@@ -199,12 +220,22 @@ export function AgentsPage() {
       if (a.selfie_url) rawUrls.push({ key: 'selfie', url: a.selfie_url })
 
       await Promise.all(rawUrls.map(async ({ key, url }) => {
-        const path = extractPath(url)
-        if (!path) { map[key] = url; return }
-        const { data } = await supabase.storage
-          .from('verification-documents')
-          .createSignedUrl(path, 3600) // valide 1h
-        map[key] = data?.signedUrl ?? url
+        const extracted = extractBucketAndPath(url)
+        if (!extracted) { map[key] = url; return }
+        try {
+          const { data, error } = await supabase.storage
+            .from(extracted.bucket)
+            .createSignedUrl(extracted.path, 60 * 60 * 24) // valide 24h
+          if (error || !data?.signedUrl) {
+            console.warn(`[SignedURL] Échec pour ${extracted.bucket}/${extracted.path}:`, error?.message)
+            map[key] = url
+          } else {
+            map[key] = data.signedUrl
+          }
+        } catch (e) {
+          console.error(`[SignedURL] Exception pour ${url}:`, e)
+          map[key] = url
+        }
       }))
 
       result[a.id] = map
