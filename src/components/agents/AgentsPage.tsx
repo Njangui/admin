@@ -177,9 +177,9 @@ export function AgentsPage() {
   function extractPath(url: string): string | null {
     try {
       const u = new URL(url)
-      // URL publique : /storage/v1/object/public/agent-documents/<path>
-      // URL signée  : /storage/v1/object/sign/agent-documents/<path>
-      const match = u.pathname.match(/\/storage\/v1\/object\/(?:public|sign)\/agent-documents\/(.+)/)
+      // URL publique : /storage/v1/object/public/verification-documents/<path>
+      // URL signée  : /storage/v1/object/sign/verification-documents/<path>
+      const match = u.pathname.match(/\/storage\/v1\/object\/(?:public|sign)\/verification-documents\/(.+)/)
       return match ? decodeURIComponent(match[1].split('?')[0]) : null
     } catch { return null }
   }
@@ -202,7 +202,7 @@ export function AgentsPage() {
         const path = extractPath(url)
         if (!path) { map[key] = url; return }
         const { data } = await supabase.storage
-          .from('agent-documents')
+          .from('verification-documents')
           .createSignedUrl(path, 3600) // valide 1h
         map[key] = data?.signedUrl ?? url
       }))
