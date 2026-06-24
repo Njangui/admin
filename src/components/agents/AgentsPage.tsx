@@ -1,427 +1,570 @@
 'use client'
-
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, useCallback } from 'react'
+import Image from 'next/image'
+import { useSearchParams } from 'next/navigation'
 import {
-  MapPin, Star, TrendingUp, Shield, ChevronRight,
-  CheckCircle2, Upload, Loader2, ArrowRight, ArrowLeft
+  CheckCircle2, XCircle, ChevronDown, ChevronUp, Star, MapPin,
+  Phone, Loader2, Zap, ZapOff, ZoomIn, X, ChevronLeft, ChevronRight,
+  ShieldCheck, Camera,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import { useAuthStore } from '@/stores/auth'
-import { cn } from '@/lib/utils'
-import Link from 'next/link'
-import { ImageUploader } from '@/components/ui/ImageUploader'
+import { PageHeader, Badge, LoadingSpinner } from '@/components/ui/index'
+import { formatDate, cn } from '@/lib/utils/index'
 import toast from 'react-hot-toast'
 
-const QUESTIONS = [
-  {
-    id: 'experience',
-    label: 'Avez-vous de l\'expérience dans l\'immobilier ou la vente ?',
-    options: ['Oui, plusieurs années', 'Oui, un peu', 'Non, mais je suis motivé(e)', 'Non'],
-  },
-  {
-    id: 'neighborhood',
-    label: 'Dans quel quartier vivez-vous / souhaitez-vous couvrir ?',
-    type: 'text',
-    placeholder: 'Ex: Simbock, Biyem-Assi, Jouvence...',
-  },
-  {
-    id: 'availability',
-    label: 'Quelle est votre disponibilité hebdomadaire ?',
-    options: ['Temps plein (5j/semaine)', 'Mi-temps (3j/semaine)', 'Week-ends uniquement', 'Variable'],
-  },
-  {
-    id: 'vehicle',
-    label: 'Disposez-vous d\'un moyen de transport ?',
-    options: ['Moto personnelle', 'Voiture personnelle', 'Transport en commun', 'Aucun'],
-  },
-  {
-    id: 'motivation',
-    label: 'Pourquoi souhaitez-vous rejoindre Habynex ?',
-    type: 'textarea',
-    placeholder: 'Décrivez vos motivations en quelques lignes...',
-  },
-]
+const SC: Record<string, string> = {
+  pending:   'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400',
+  reviewing: 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400',
+  active:    'bg-green-100 text-green-700 dark:bg-green-950/40 dark:text-green-400',
+  suspended: 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400',
+  rejected:  'bg-gray-100 text-gray-500 dark:bg-gray-800',
+}
+const SL: Record<string, string> = {
+  pending: 'En attente', reviewing: 'En cours', active: 'Actif',
+  suspended: 'Suspendu', rejected: 'Rejeté',
+}
 
-const COMMISSION_MODELS = [
-  {
-    key: 'A',
-    title: 'Modèle A — Flexible',
-    commission: '15%',
-    extra: '+ Remboursement transport',
-    desc: 'Idéal si vous débutez. Commission légèrement plus basse mais vos frais de déplacement sont couverts.',
-    color: 'border-brand-200 dark:border-brand-800',
-    badge: 'Recommandé',
-    badgeColor: 'bg-brand-500 text-white',
-  },
-  {
-    key: 'B',
-    title: 'Modèle B — Premium',
-    commission: '20%',
-    extra: 'Sans remboursement transport',
-    desc: 'Commission maximale. Vous gérez vous-même vos frais de déplacement.',
-    color: 'border-gray-200 dark:border-gray-700',
-    badge: '',
-    badgeColor: '',
-  },
-]
+// ── Lightbox pour prévisualiser les documents ─────────────────────────────────
+interface LightboxProps {
+  images: { url: string; label: string }[]
+  initialIndex?: number
+  onClose: () => void
+}
 
-export function DevenirAgentPage() {
-  const { user, profile } = useAuthStore()
-  const router = useRouter()
-  const supabase = createClient()
+function DocumentLightbox({ images, initialIndex = 0, onClose }: LightboxProps) {
+  const [idx, setIdx] = useState(initialIndex)
 
-  const [step, setStep] = useState(0) // 0=landing, 1=questions, 2=model, 3=docs, 4=success
-  const [answers, setAnswers] = useState<Record<string, string>>({})
-  const [questionIdx, setQuestionIdx] = useState(0)
-  const [model, setModel] = useState<'A' | 'B'>('A')
-  const [docFront, setDocFront] = useState<File | null>(null)
-  const [docBack, setDocBack] = useState<File | null>(null)
-  const [selfie, setSelfie] = useState<File | null>(null)
-  const [submitting, setSubmitting] = useState(false)
-
-  const currentQ = QUESTIONS[questionIdx]
-  const allQAnswered = QUESTIONS.every(q => answers[q.id]?.trim())
-
-  function handleAnswer(val: string) {
-    setAnswers(prev => ({ ...prev, [currentQ.id]: val }))
-    if (currentQ.type !== 'text' && currentQ.type !== 'textarea') {
-      setTimeout(() => {
-        if (questionIdx < QUESTIONS.length - 1) setQuestionIdx(i => i + 1)
-      }, 280)
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+      if (e.key === 'ArrowRight') setIdx(i => Math.min(i + 1, images.length - 1))
+      if (e.key === 'ArrowLeft') setIdx(i => Math.max(i - 1, 0))
     }
-  }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [images.length, onClose])
 
-  async function submit() {
-    if (!user) { router.push('/connexion'); return }
-    if (!docFront || !docBack || !selfie) { toast.error('Veuillez uploader tous les documents requis'); return }
-    setSubmitting(true)
-    try {
-      // Upload documents dans Supabase Storage
-      const uploadFile = async (file: File, path: string) => {
-        const { data } = await supabase.storage
-          .from('verification-documents')
-          .upload(`${user.id}/${path}`, file, { upsert: true })
-        const { data: { publicUrl } } = supabase.storage
-          .from('verification-documents')
-          .getPublicUrl(data?.path ?? '')
-        return publicUrl
-      }
+  const cur = images[idx]
 
-      const [frontUrl, backUrl, selfieUrl] = await Promise.all([
-        uploadFile(docFront, 'id-front.jpg'),
-        uploadFile(docBack, 'id-back.jpg'),
-        uploadFile(selfie, 'selfie.jpg'),
-      ])
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 p-4" onClick={onClose}>
+      <div className="relative max-w-2xl w-full" onClick={e => e.stopPropagation()}>
 
-      // Créer l'entrée agent
-      const { error } = await supabase.from('agents').upsert({
-        id: user.id,
-        commission_model: model,
-        status: 'pending',
-        application_answers: answers,
-        id_document_url: `${frontUrl}|||${backUrl}`,
-        selfie_url: selfieUrl,
-      })
+        {/* Header lightbox */}
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-white font-semibold text-sm">{cur.label}</p>
+          <div className="flex items-center gap-2">
+            <span className="text-gray-400 text-xs">{idx + 1} / {images.length}</span>
+            <button onClick={onClose}
+              className="w-8 h-8 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors">
+              <X size={16} />
+            </button>
+          </div>
+        </div>
 
-      if (error) throw error
+        {/* Image */}
+        <div className="relative bg-gray-900 rounded-2xl overflow-hidden" style={{ minHeight: 300, maxHeight: '70vh' }}>
+          <Image
+            src={cur.url}
+            alt={cur.label}
+            fill
+            className="object-contain"
+            sizes="(max-width: 768px) 100vw, 672px"
+            unoptimized
+          />
+        </div>
 
-      // Attribuer le rôle (en attente de validation admin)
-      setStep(4)
-    } catch (err) {
-      toast.error('Erreur lors de la soumission. Réessayez.')
-      console.error(err)
-    } finally {
-      setSubmitting(false)
-    }
-  }
+        {/* Navigation */}
+        {images.length > 1 && (
+          <div className="flex items-center justify-center gap-4 mt-4">
+            <button onClick={() => setIdx(i => Math.max(i - 1, 0))}
+              disabled={idx === 0}
+              className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 text-white disabled:opacity-30 transition-colors">
+              <ChevronLeft size={18} />
+            </button>
+            <div className="flex gap-1.5">
+              {images.map((_, i) => (
+                <button key={i} onClick={() => setIdx(i)}
+                  className={cn('w-2 h-2 rounded-full transition-all',
+                    i === idx ? 'bg-white w-4' : 'bg-white/40')} />
+              ))}
+            </div>
+            <button onClick={() => setIdx(i => Math.min(i + 1, images.length - 1))}
+              disabled={idx === images.length - 1}
+              className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 text-white disabled:opacity-30 transition-colors">
+              <ChevronRight size={18} />
+            </button>
+          </div>
+        )}
 
-  // ── Landing ──────────────────────────────────────────────────
-  if (step === 0) return (
-    <div className="max-w-4xl mx-auto px-4 py-12">
-      {/* Hero */}
-      <div className="text-center mb-14">
-        <span className="inline-flex items-center gap-2 px-4 py-2 bg-brand-50 dark:bg-brand-950 text-brand-500 rounded-full text-sm font-medium mb-5">
-          <Shield size={14} /> Réseau d&apos;agents certifiés Habynex
-        </span>
-        <h1 className="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white mb-4 leading-tight">
-          Gagnez votre vie<br />
-          <span className="text-brand-500">dans votre quartier</span>
-        </h1>
-        <p className="text-gray-500 text-lg max-w-xl mx-auto">
-          Devenez agent terrain certifié Habynex. Accompagnez les candidats locataires, gagnez des commissions attractives et bénéficiez du support de notre IA.
+        {/* Lien téléchargement */}
+        <div className="mt-3 text-center">
+          <a href={cur.url} target="_blank" rel="noopener noreferrer"
+            className="text-xs text-gray-400 hover:text-white underline transition-colors">
+            Ouvrir en plein écran ↗
+          </a>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── DocumentCard ─────────────────────────────────────────────────────────────
+function DocumentCard({ url, label, icon, onZoom }: {
+  url: string; label: string; icon: React.ReactNode; onZoom: () => void
+}) {
+  const [imgError, setImgError] = useState(false)
+
+  return (
+    <div className="relative group rounded-2xl overflow-hidden bg-gray-100 dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 hover:border-[#f95d1e] transition-all cursor-pointer"
+      onClick={onZoom} style={{ minHeight: 160 }}>
+      {!imgError ? (
+        <Image
+          src={url}
+          alt={label}
+          fill
+          className="object-cover group-hover:scale-105 transition-transform duration-200"
+          sizes="(max-width: 640px) 100vw, 280px"
+          onError={() => setImgError(true)}
+          unoptimized
+        />
+      ) : (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-gray-400">
+          {icon}
+          <p className="text-xs">Impossible d&apos;afficher</p>
+          <a href={url} target="_blank" rel="noopener noreferrer"
+            className="text-xs text-[#f95d1e] hover:underline" onClick={e => e.stopPropagation()}>
+            Ouvrir le lien ↗
+          </a>
+        </div>
+      )}
+
+      {/* Overlay hover */}
+      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-center justify-center">
+        <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center shadow-lg">
+            <ZoomIn size={18} className="text-gray-800" />
+          </div>
+        </div>
+      </div>
+
+      {/* Label bas */}
+      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2">
+        <p className="text-white text-xs font-semibold flex items-center gap-1">
+          {icon} {label}
         </p>
       </div>
-
-      {/* Avantages style Airbnb */}
-      <div className="grid md:grid-cols-3 gap-5 mb-12">
-        {[
-          { icon: MapPin, title: 'Votre quartier', desc: 'Travaillez uniquement dans la zone que vous connaissez le mieux. Moins de transport, plus d\'efficacité.' },
-          { icon: TrendingUp, title: 'Commissions attractives', desc: '15% à 20% sur chaque transaction conclue, en plus du remboursement de vos frais selon votre modèle.' },
-          { icon: Star, title: 'Support IA 24/7', desc: 'Notre assistant IA vous aide à planifier votre agenda, gérer vos RDV et vous améliorer chaque semaine.' },
-        ].map(item => (
-          <div key={item.title} className="bg-white dark:bg-gray-900 rounded-3xl border border-gray-100 dark:border-gray-800 p-6 shadow-card">
-            <div className="w-12 h-12 bg-brand-50 dark:bg-brand-950 rounded-2xl flex items-center justify-center mb-4">
-              <item.icon size={22} className="text-brand-500" />
-            </div>
-            <h3 className="font-bold text-gray-900 dark:text-white mb-2">{item.title}</h3>
-            <p className="text-sm text-gray-500 leading-relaxed">{item.desc}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Comment ça marche */}
-      <div className="bg-gray-50 dark:bg-gray-900 rounded-3xl p-8 mb-10">
-        <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-6 text-center">Comment ça marche ?</h2>
-        <div className="space-y-5">
-          {[
-            { step: '1', title: 'Candidatez en ligne', desc: 'Répondez à quelques questions. Notre IA vous évalue et transmet votre dossier à l\'équipe Habynex.' },
-            { step: '2', title: 'Vérification de votre identité', desc: 'Soumettez votre CNI recto/verso et un selfie tenant votre document. Traitement sous 48h.' },
-            { step: '3', title: 'Validation et formation', desc: 'Un admin Habynex examine votre dossier et vous contacte. Une fois validé, vous êtes opérationnel.' },
-            { step: '4', title: 'Vos premières missions', desc: 'Recevez vos premières demandes de visite, confirmez-les dans votre dashboard et commencez à gagner.' },
-          ].map((item, i) => (
-            <div key={i} className="flex gap-4">
-              <div className="w-8 h-8 bg-brand-500 text-white rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 mt-0.5">
-                {item.step}
-              </div>
-              <div>
-                <p className="font-semibold text-gray-900 dark:text-white text-sm">{item.title}</p>
-                <p className="text-gray-500 text-sm mt-0.5">{item.desc}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="text-center">
-        {user ? (
-          <button
-            onClick={() => setStep(1)}
-            className="inline-flex items-center gap-2 px-8 py-4 bg-brand-500 hover:bg-brand-600 text-white font-bold rounded-2xl transition-colors text-base shadow-lg hover:shadow-brand-500/30"
-          >
-            Candidater maintenant <ArrowRight size={18} />
-          </button>
-        ) : (
-          <Link
-            href="/inscription?redirect=/devenir-agent"
-            className="inline-flex items-center gap-2 px-8 py-4 bg-brand-500 hover:bg-brand-600 text-white font-bold rounded-2xl transition-colors text-base shadow-lg"
-          >
-            Créer un compte pour candidater <ArrowRight size={18} />
-          </Link>
-        )}
-        <p className="text-xs text-gray-400 mt-3">Candidature gratuite · Aucun engagement initial</p>
-      </div>
     </div>
   )
+}
 
-  // ── Questions ────────────────────────────────────────────────
-  if (step === 1) return (
-    <div className="max-w-xl mx-auto px-4 py-12">
-      {/* Progress */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between text-sm text-gray-500 mb-2">
-          <span>Question {questionIdx + 1} / {QUESTIONS.length}</span>
-          <button onClick={() => setStep(0)} className="text-gray-400 hover:text-gray-600 transition-colors">Annuler</button>
-        </div>
-        <div className="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
-          <div
-            className="h-full bg-brand-500 rounded-full transition-all duration-500"
-            style={{ width: `${((questionIdx + 1) / QUESTIONS.length) * 100}%` }}
-          />
-        </div>
-      </div>
+// ── AgentsPage ────────────────────────────────────────────────────────────────
+export function AgentsPage() {
+  const searchParams = useSearchParams()
+  const supabase = createClient()
+  const [agents, setAgents] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [processing, setProcessing] = useState<string | null>(null)
+  const [togglingPublish, setTogglingPublish] = useState<string | null>(null)
+  const [statusFilter, setStatusFilter] = useState(searchParams.get('status') ?? '')
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [rejectReason, setRejectReason] = useState('')
+  const [lightbox, setLightbox] = useState<{ images: { url: string; label: string }[]; idx: number } | null>(null)
+  // Map<agentId, { front?: string; back?: string; selfie?: string }> — signed URLs
+  const [signedUrls, setSignedUrls] = useState<Record<string, Record<string, string>>>({})
 
-      <div className="bg-white dark:bg-gray-900 rounded-3xl border border-gray-100 dark:border-gray-800 p-8 shadow-card animate-fade-in">
-        <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-6">{currentQ.label}</h2>
+  /** Extrait le path Supabase à partir d'une URL publique ou signée */
+  function extractPath(url: string): string | null {
+    try {
+      const u = new URL(url)
+      // URL publique : /storage/v1/object/public/verification-documents/<path>
+      // URL signée  : /storage/v1/object/sign/verification-documents/<path>
+      const match = u.pathname.match(/\/storage\/v1\/object\/(?:public|sign)\/verification-documents\/(.+)/)
+      return match ? decodeURIComponent(match[1].split('?')[0]) : null
+    } catch { return null }
+  }
 
-        {currentQ.options ? (
-          <div className="space-y-2">
-            {currentQ.options.map(opt => (
-              <button
-                key={opt}
-                onClick={() => handleAnswer(opt)}
-                className={cn(
-                  'w-full px-5 py-3.5 rounded-2xl border-2 text-sm font-medium text-left transition-all',
-                  answers[currentQ.id] === opt
-                    ? 'border-brand-500 bg-brand-50 dark:bg-brand-950 text-brand-600 dark:text-brand-400'
-                    : 'border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600'
-                )}
-              >
-                {answers[currentQ.id] === opt && <CheckCircle2 size={16} className="inline mr-2 text-brand-500" />}
-                {opt}
-              </button>
-            ))}
-          </div>
-        ) : currentQ.type === 'textarea' ? (
-          <textarea
-            value={answers[currentQ.id] ?? ''}
-            onChange={e => setAnswers(p => ({ ...p, [currentQ.id]: e.target.value }))}
-            placeholder={currentQ.placeholder}
-            rows={4}
-            className="w-full px-4 py-3 rounded-2xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all resize-none"
-          />
-        ) : (
-          <input
-            type="text"
-            value={answers[currentQ.id] ?? ''}
-            onChange={e => setAnswers(p => ({ ...p, [currentQ.id]: e.target.value }))}
-            placeholder={currentQ.placeholder}
-            className="w-full px-4 py-3 rounded-2xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all"
-          />
-        )}
+  /** Génère les signed URLs pour tous les agents chargés */
+  async function resolveSignedUrls(agents: any[]) {
+    const result: Record<string, Record<string, string>> = {}
+    await Promise.all(agents.map(async (a) => {
+      const map: Record<string, string> = {}
+      const rawUrls: { key: string; url: string }[] = []
 
-        <div className="flex gap-3 mt-6">
-          {questionIdx > 0 && (
-            <button
-              onClick={() => setQuestionIdx(i => i - 1)}
-              className="flex items-center gap-2 px-5 py-3 rounded-2xl border border-gray-200 dark:border-gray-700 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-            >
-              <ArrowLeft size={16} /> Retour
-            </button>
-          )}
-          {(currentQ.type === 'text' || currentQ.type === 'textarea') && (
-            <button
-              onClick={() => {
-                if (!answers[currentQ.id]?.trim()) return
-                if (questionIdx < QUESTIONS.length - 1) setQuestionIdx(i => i + 1)
-                else setStep(2)
-              }}
-              disabled={!answers[currentQ.id]?.trim()}
-              className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-brand-500 hover:bg-brand-600 disabled:bg-gray-200 dark:disabled:bg-gray-700 text-white font-semibold rounded-2xl transition-colors text-sm"
-            >
-              {questionIdx === QUESTIONS.length - 1 ? 'Suivant' : 'Continuer'} <ArrowRight size={16} />
-            </button>
-          )}
-          {currentQ.options && questionIdx === QUESTIONS.length - 1 && answers[currentQ.id] && (
-            <button
-              onClick={() => setStep(2)}
-              className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-brand-500 text-white font-semibold rounded-2xl transition-colors text-sm"
-            >
-              Continuer <ArrowRight size={16} />
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  )
+      if (a.id_document_url) {
+        a.id_document_url.split('|||').filter(Boolean).forEach((url: string, i: number) => {
+          rawUrls.push({ key: i === 0 ? 'front' : 'back', url: url.trim() })
+        })
+      }
+      if (a.selfie_url) rawUrls.push({ key: 'selfie', url: a.selfie_url })
 
-  // ── Choix du modèle ──────────────────────────────────────────
-  if (step === 2) return (
-    <div className="max-w-xl mx-auto px-4 py-12">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Choisissez votre modèle</h1>
-        <p className="text-gray-500 text-sm">Ce choix peut être modifié ultérieurement par un admin sur demande.</p>
-      </div>
+      await Promise.all(rawUrls.map(async ({ key, url }) => {
+        const path = extractPath(url)
+        if (!path) { map[key] = url; return }
+        const { data } = await supabase.storage
+          .from('verification-documents')
+          .createSignedUrl(path, 3600) // valide 1h
+        map[key] = data?.signedUrl ?? url
+      }))
 
-      <div className="space-y-4 mb-8">
-        {COMMISSION_MODELS.map(m => (
-          <button
-            key={m.key}
-            onClick={() => setModel(m.key as 'A' | 'B')}
-            className={cn(
-              'w-full text-left p-6 rounded-3xl border-2 transition-all',
-              model === m.key
-                ? 'border-brand-500 bg-brand-50 dark:bg-brand-950/30'
-                : `${m.color} bg-white dark:bg-gray-900 hover:border-gray-300 dark:hover:border-gray-600`
-            )}
-          >
-            <div className="flex items-start justify-between gap-3 mb-3">
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="font-bold text-gray-900 dark:text-white">{m.title}</span>
-                  {m.badge && <span className={cn('px-2 py-0.5 rounded-full text-xs font-semibold', m.badgeColor)}>{m.badge}</span>}
-                </div>
-                <div className="text-3xl font-bold text-brand-500">{m.commission}</div>
-                <div className="text-sm text-gray-500 mt-0.5">{m.extra}</div>
-              </div>
-              <div className={cn(
-                'w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-1 transition-colors',
-                model === m.key ? 'border-brand-500 bg-brand-500' : 'border-gray-300 dark:border-gray-600'
-              )}>
-                {model === m.key && <div className="w-2.5 h-2.5 bg-white rounded-full" />}
-              </div>
-            </div>
-            <p className="text-sm text-gray-500">{m.desc}</p>
-          </button>
-        ))}
-      </div>
+      result[a.id] = map
+    }))
+    setSignedUrls(result)
+  }
 
-      <button
-        onClick={() => setStep(3)}
-        className="w-full flex items-center justify-center gap-2 py-4 bg-brand-500 hover:bg-brand-600 text-white font-bold rounded-2xl transition-colors"
-      >
-        Continuer <ArrowRight size={18} />
-      </button>
-    </div>
-  )
+  const load = useCallback(async () => {
+    setLoading(true)
+    let q = supabase.from('agents').select(`
+      id, status, commission_model, ai_score, id_document_url, selfie_url,
+      application_answers, missions_completed, created_at, neighborhood_id,
+      can_auto_publish,
+      profile:profiles!agents_id_fkey(full_name, phone, avatar_url),
+      neighborhood:neighborhoods!agents_neighborhood_id_fkey(name)
+    `).order('created_at', { ascending: false })
+    if (statusFilter) q = q.eq('status', statusFilter)
+    const { data } = await q
+    const loaded = data ?? []
+    setAgents(loaded)
+    setLoading(false)
+    // Résoudre les URLs signées en arrière-plan
+    resolveSignedUrls(loaded)
+  }, [statusFilter])
 
-  // ── Upload documents ─────────────────────────────────────────
-  if (step === 3) return (
-    <div className="max-w-xl mx-auto px-4 py-12">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Vérification d&apos;identité</h1>
-        <p className="text-gray-500 text-sm">Uploadez votre CNI ou passeport recto/verso + un selfie tenant votre document bien visible.</p>
-      </div>
+  useEffect(() => { load() }, [load])
 
-      <div className="space-y-4 mb-8">
-        {[
-          { key: 'front', label: '🪪 CNI / Passeport — Recto', setter: setDocFront, file: docFront },
-          { key: 'back', label: '🔄 CNI / Passeport — Verso', setter: setDocBack, file: docBack },
-          { key: 'selfie', label: '🤳 Selfie tenant le document', setter: setSelfie, file: selfie },
-        ].map(item => (
-          <div key={item.key}>
-            <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">{item.label}</p>
-            <ImageUploader
-              maxFiles={1}
-              maxSizeKB={300}
-              label={item.file ? `✅ ${item.file.name}` : 'Cliquer ou glisser une image'}
-              onFilesReady={files => item.setter(files[0] ?? null)}
-            />
-          </div>
-        ))}
-      </div>
+  async function validate(id: string) {
+    setProcessing(id)
+    const { data: { user } } = await supabase.auth.getUser()
+    await supabase.from('agents').update({
+      status: 'active', validated_by: user?.id, validated_at: new Date().toISOString()
+    }).eq('id', id)
+    await supabase.from('user_roles').upsert({ user_id: id, role: 'agent' }, { onConflict: 'user_id,role' })
+    await supabase.from('notifications').insert({
+      user_id: id, title: '🎉 Candidature acceptée !',
+      body: 'Vous êtes maintenant agent certifié Habynex.', channel: 'in_app',
+    })
+    toast.success('Agent validé ✅')
+    await load()
+    setProcessing(null)
+  }
 
-      {/* Info sécurité */}
-      <div className="flex gap-3 p-4 bg-gray-50 dark:bg-gray-800 rounded-2xl mb-6">
-        <Shield size={16} className="text-brand-500 flex-shrink-0 mt-0.5" />
-        <p className="text-xs text-gray-500">Vos documents sont chiffrés et ne sont accessibles qu&apos;aux administrateurs Habynex pour la vérification.</p>
-      </div>
+  async function reject(id: string) {
+    if (!rejectReason.trim()) { toast.error('Indiquez la raison'); return }
+    setProcessing(id)
+    await supabase.from('agents').update({ status: 'rejected', rejection_reason: rejectReason }).eq('id', id)
+    await supabase.from('notifications').insert({
+      user_id: id, title: 'Candidature non retenue',
+      body: `Raison : ${rejectReason}`, channel: 'in_app',
+    })
+    toast('Rejeté et notifié', { icon: 'ℹ️' })
+    setRejectReason('')
+    setExpandedId(null)
+    await load()
+    setProcessing(null)
+  }
 
-      <div className="flex gap-3">
-        <button
-          onClick={() => setStep(2)}
-          className="flex items-center gap-2 px-5 py-3.5 border border-gray-200 dark:border-gray-700 text-sm font-medium text-gray-600 dark:text-gray-400 rounded-2xl hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-        >
-          <ArrowLeft size={16} /> Retour
-        </button>
-        <button
-          onClick={submit}
-          disabled={!docFront || !docBack || !selfie || submitting}
-          className="flex-1 flex items-center justify-center gap-2 py-3.5 bg-brand-500 hover:bg-brand-600 disabled:bg-gray-200 dark:disabled:bg-gray-700 text-white font-bold rounded-2xl transition-colors"
-        >
-          {submitting ? <><Loader2 size={16} className="animate-spin" /> Envoi en cours...</> : <>Soumettre ma candidature <ArrowRight size={16} /></>}
-        </button>
-      </div>
-    </div>
-  )
+  async function suspend(id: string) {
+    await supabase.from('agents').update({ status: 'suspended' }).eq('id', id)
+    await supabase.from('user_roles').delete().eq('user_id', id).eq('role', 'agent')
+    toast('Agent suspendu', { icon: '⚠️' })
+    await load()
+  }
 
-  // ── Succès ───────────────────────────────────────────────────
+  async function toggleAutoPublish(agent: any) {
+    const newVal = !agent.can_auto_publish
+    setTogglingPublish(agent.id)
+    try {
+      const { error } = await supabase.from('agents').update({ can_auto_publish: newVal }).eq('id', agent.id)
+      if (error) throw error
+      await supabase.from('notifications').insert({
+        user_id: agent.id,
+        title: newVal ? '⚡ Publication directe activée' : '🔒 Publication directe désactivée',
+        body: newVal
+          ? 'L\'admin vous a accordé le droit de publier vos annonces directement sans validation.'
+          : 'Vos prochaines annonces devront à nouveau passer par la validation admin.',
+        channel: 'in_app',
+      })
+      toast.success(newVal ? 'Publication directe activée ⚡' : 'Publication directe désactivée')
+      await load()
+    } catch {
+      toast.error('Erreur lors de la modification')
+    } finally {
+      setTogglingPublish(null)
+    }
+  }
+
+  // Construire la liste d'images pour la lightbox (avec signed URLs si disponibles)
+  function buildDocImages(agent: any): { url: string; label: string }[] {
+    const imgs: { url: string; label: string }[] = []
+    const signed = signedUrls[agent.id] ?? {}
+
+    if (agent.id_document_url) {
+      const parts = agent.id_document_url.split('|||').filter(Boolean)
+      parts.forEach((rawUrl: string, i: number) => {
+        const resolvedUrl = i === 0 ? (signed.front ?? rawUrl.trim()) : (signed.back ?? rawUrl.trim())
+        imgs.push({ url: resolvedUrl, label: i === 0 ? '🪪 CNI / Passeport — Recto' : '🪪 CNI / Passeport — Verso' })
+      })
+    }
+    if (agent.selfie_url) {
+      imgs.push({ url: signed.selfie ?? agent.selfie_url, label: '🤳 Selfie de vérification' })
+    }
+    return imgs
+  }
+
   return (
-    <div className="max-w-md mx-auto px-4 py-20 text-center">
-      <div className="w-20 h-20 bg-trust-50 dark:bg-trust-950/30 rounded-full flex items-center justify-center mx-auto mb-6">
-        <CheckCircle2 size={36} className="text-trust-500" />
+    <div className="space-y-5">
+      {lightbox && (
+        <DocumentLightbox
+          images={lightbox.images}
+          initialIndex={lightbox.idx}
+          onClose={() => setLightbox(null)}
+        />
+      )}
+
+      <PageHeader title="Agents" subtitle="Gestion des agents terrain" />
+
+      {/* Filtres */}
+      <div className="flex gap-2 flex-wrap">
+        {[{ value: '', label: 'Tous' }, ...Object.entries(SL).map(([v, l]) => ({ value: v, label: l }))].map(opt => (
+          <button key={opt.value} onClick={() => setStatusFilter(opt.value)}
+            className={cn('px-3 py-1.5 rounded-full text-xs font-medium border transition-all',
+              statusFilter === opt.value
+                ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 border-gray-900'
+                : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-400 bg-white dark:bg-gray-900')}>
+            {opt.label}
+          </button>
+        ))}
       </div>
-      <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-3">Candidature envoyée ! 🎉</h1>
-      <p className="text-gray-500 mb-8 leading-relaxed">
-        Notre équipe examine votre dossier. Vous recevrez une réponse dans les <strong>48 heures</strong> ouvrées.
-        Un admin vous contactera directement si votre profil est retenu.
-      </p>
-      <Link
-        href="/"
-        className="inline-flex items-center gap-2 px-8 py-3.5 bg-brand-500 hover:bg-brand-600 text-white font-bold rounded-2xl transition-colors"
-      >
-        Retour à l&apos;accueil <ChevronRight size={16} />
-      </Link>
+
+      {loading ? <LoadingSpinner /> : (
+        <div className="space-y-3">
+          {agents.length === 0 ? (
+            <div className="text-center py-16 bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800">
+              <p className="text-4xl mb-3">👤</p>
+              <p className="text-gray-500">Aucun agent</p>
+            </div>
+          ) : agents.map(a => {
+            const p = Array.isArray(a.profile) ? a.profile[0] : a.profile
+            const n = Array.isArray(a.neighborhood) ? a.neighborhood[0] : a.neighborhood
+            const isExp = expandedId === a.id
+            const docImages = buildDocImages(a)
+
+            return (
+              <div key={a.id} className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 overflow-hidden">
+
+                {/* Ligne principale */}
+                <div className="px-5 py-4 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <div className="w-10 h-10 rounded-xl overflow-hidden bg-gray-100 dark:bg-gray-800 flex-shrink-0">
+                      {p?.avatar_url
+                        ? <Image src={p.avatar_url} alt="" width={40} height={40} className="object-cover w-full h-full" />
+                        : <div className="w-full h-full flex items-center justify-center font-bold text-gray-400">{p?.full_name?.charAt(0) ?? '?'}</div>}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-semibold text-sm text-gray-800 dark:text-white">{p?.full_name ?? 'Agent'}</p>
+                        <Badge label={SL[a.status] ?? a.status} color={SC[a.status] ?? ''} />
+                        <span className={cn('text-xs font-semibold px-2 py-0.5 rounded-full',
+                          a.commission_model === 'A'
+                            ? 'bg-blue-100 text-blue-600 dark:bg-blue-950/30 dark:text-blue-400'
+                            : 'bg-purple-100 text-purple-600 dark:bg-purple-950/30 dark:text-purple-400')}>
+                          Modèle {a.commission_model}
+                        </span>
+                        {a.can_auto_publish && (
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-[#f95d1e]/10 text-[#f95d1e] flex items-center gap-1">
+                            <Zap size={9} /> Publication directe
+                          </span>
+                        )}
+                        {/* Badge documents soumis */}
+                        {docImages.length > 0 && (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 flex items-center gap-1">
+                            <ShieldCheck size={9} /> {docImages.length} doc{docImages.length > 1 ? 's' : ''}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 mt-0.5 text-xs text-gray-400">
+                        {p?.phone && <span className="flex items-center gap-1"><Phone size={11} />{p.phone}</span>}
+                        {n && <span className="flex items-center gap-1"><MapPin size={11} />{n.name}</span>}
+                        {a.ai_score !== null && <span className="flex items-center gap-1 text-amber-500"><Star size={11} />Score IA: {a.ai_score}/10</span>}
+                        <span>{a.missions_completed} mission{a.missions_completed > 1 ? 's' : ''}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {a.status === 'pending' && (
+                      <button onClick={() => validate(a.id)} disabled={processing === a.id}
+                        className="w-8 h-8 flex items-center justify-center rounded-xl bg-green-100 dark:bg-green-950/30 text-green-600 hover:bg-green-200 transition-colors disabled:opacity-50">
+                        {processing === a.id ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={15} />}
+                      </button>
+                    )}
+                    {a.status === 'active' && (
+                      <button onClick={() => suspend(a.id)}
+                        className="px-3 py-1.5 rounded-xl bg-red-50 dark:bg-red-950/20 text-red-500 text-xs font-semibold hover:bg-red-100 transition-colors">
+                        Suspendre
+                      </button>
+                    )}
+                    <button onClick={() => setExpandedId(isExp ? null : a.id)}
+                      className="w-8 h-8 flex items-center justify-center rounded-xl text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                      {isExp ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Détails expandés */}
+                {isExp && (
+                  <div className="px-5 pb-5 border-t border-gray-100 dark:border-gray-800 pt-4 space-y-5 animate-fade-in">
+
+                    {/* ── DOCUMENTS — Visualisation images ── */}
+                    {docImages.length > 0 && (
+                      <div>
+                        <div className="flex items-center gap-2 mb-3">
+                          <ShieldCheck size={15} className="text-[#f95d1e]" />
+                          <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
+                            Documents d&apos;identité
+                          </p>
+                          <span className="text-[10px] bg-amber-100 text-amber-600 dark:bg-amber-950/30 dark:text-amber-400 px-2 py-0.5 rounded-full font-medium">
+                            Cliquez pour agrandir
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                          {/* CNI recto/verso */}
+                          {a.id_document_url?.split('|||').filter(Boolean).map((rawUrl: string, i: number) => {
+                            const s = signedUrls[a.id] ?? {}
+                            const resolvedUrl = i === 0 ? (s.front ?? rawUrl.trim()) : (s.back ?? rawUrl.trim())
+                            return (
+                              <DocumentCard
+                                key={`id-${i}`}
+                                url={resolvedUrl}
+                                label={i === 0 ? 'CNI Recto' : 'CNI Verso'}
+                                icon={<ShieldCheck size={12} />}
+                                onZoom={() => setLightbox({
+                                  images: docImages,
+                                  idx: i,
+                                })}
+                              />
+                            )
+                          })}
+
+                          {/* Selfie */}
+                          {a.selfie_url && (() => {
+                            const selfieResolved = (signedUrls[a.id] ?? {}).selfie ?? a.selfie_url
+                            return (
+                              <DocumentCard
+                                url={selfieResolved}
+                                label="Selfie de vérification"
+                                icon={<Camera size={12} />}
+                                onZoom={() => setLightbox({
+                                  images: docImages,
+                                  idx: docImages.findIndex(d => d.url === selfieResolved),
+                                })}
+                              />
+                            )
+                          })()}
+                        </div>
+
+                        {/* Bouton "Voir tous les documents" */}
+                        {docImages.length > 1 && (
+                          <button
+                            onClick={() => setLightbox({ images: docImages, idx: 0 })}
+                            className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 border border-gray-200 dark:border-gray-700 rounded-xl text-sm text-gray-600 dark:text-gray-400 hover:border-[#f95d1e] hover:text-[#f95d1e] transition-colors font-medium">
+                            <ZoomIn size={14} /> Voir tous les documents ({docImages.length})
+                          </button>
+                        )}
+
+                        {/* Message de comparaison */}
+                        <div className="mt-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/50 rounded-xl px-4 py-3">
+                          <p className="text-xs text-amber-700 dark:text-amber-400 flex items-start gap-2">
+                            <span className="text-base leading-none">💡</span>
+                            <span>Vérifiez que le visage sur le selfie correspond bien à la photo sur la CNI/passeport avant de valider.</span>
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Aucun document soumis */}
+                    {docImages.length === 0 && (
+                      <div className="bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800/50 rounded-xl px-4 py-3">
+                        <p className="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
+                          ⚠️ Aucun document soumis par cet agent.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* ── PUBLICATION DIRECTE ── */}
+                    {a.status === 'active' && (
+                      <div className="bg-gray-50 dark:bg-gray-800 rounded-2xl p-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <Zap size={15} className={a.can_auto_publish ? 'text-[#f95d1e]' : 'text-gray-400'} />
+                              <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Publication directe</p>
+                            </div>
+                            <p className="text-xs text-gray-400 leading-relaxed">
+                              {a.can_auto_publish
+                                ? 'Cet agent peut publier des annonces directement sans validation.'
+                                : 'Activez pour permettre à cet agent de publier ses annonces immédiatement.'}
+                            </p>
+                          </div>
+                          <button onClick={() => toggleAutoPublish(a)} disabled={togglingPublish === a.id}
+                            className={cn('flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all flex-shrink-0 disabled:opacity-50',
+                              a.can_auto_publish
+                                ? 'bg-red-50 dark:bg-red-950/20 text-red-500 hover:bg-red-100 border border-red-200 dark:border-red-800'
+                                : 'bg-[#f95d1e] text-white hover:bg-[#e04d0e] shadow-sm shadow-[#f95d1e]/30')}>
+                            {togglingPublish === a.id
+                              ? <Loader2 size={14} className="animate-spin" />
+                              : a.can_auto_publish
+                                ? <><ZapOff size={14} /> Désactiver</>
+                                : <><Zap size={14} /> Activer</>}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── RÉPONSES QUESTIONNAIRE ── */}
+                    {a.application_answers && Object.keys(a.application_answers).length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Réponses questionnaire</p>
+                        <div className="space-y-2">
+                          {Object.entries(a.application_answers).map(([k, v]) => (
+                            <div key={k} className="bg-gray-50 dark:bg-gray-800 rounded-xl px-3 py-2">
+                              <p className="text-xs text-gray-400 capitalize mb-0.5">{k.replace('_', ' ')}</p>
+                              <p className="text-sm text-gray-700 dark:text-gray-300">{String(v)}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── DÉCISION ── */}
+                    {(a.status === 'pending' || a.status === 'reviewing') && (
+                      <div className="space-y-3">
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Décision</p>
+                        <div className="flex gap-3">
+                          <button onClick={() => validate(a.id)} disabled={processing === a.id}
+                            className="flex-1 flex items-center justify-center gap-2 py-3 bg-green-500 hover:bg-green-600 text-white font-semibold rounded-2xl text-sm transition-colors disabled:opacity-50">
+                            <CheckCircle2 size={15} /> Valider l&apos;agent
+                          </button>
+                          <div className="flex-1 space-y-2">
+                            <input value={rejectReason} onChange={e => setRejectReason(e.target.value)}
+                              placeholder="Raison du rejet…"
+                              className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-xl text-sm text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 outline-none focus:border-red-400" />
+                            <button onClick={() => reject(a.id)} disabled={processing === a.id}
+                              className="w-full flex items-center justify-center gap-2 py-2.5 border-2 border-red-300 dark:border-red-800 text-red-500 font-semibold rounded-xl text-sm hover:bg-red-50 dark:hover:bg-red-950/20 disabled:opacity-50">
+                              <XCircle size={15} /> Rejeter
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
