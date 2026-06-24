@@ -96,7 +96,10 @@ export function FaqEditor({ listingId, listingTitle, onClose }: FaqEditorProps) 
         await supabase.from('listing_faqs').delete().eq('id', faqId)
         setFaqId(null)
       }
-      const res = await fetch('/api/ai/generate-faq', {
+
+      // ⚠️ Cette route est sur habynex (pas sur admin) — on doit appeler l'URL absolue
+      const habynexUrl = process.env.NEXT_PUBLIC_HABYNEX_URL ?? 'https://habynex.com'
+      const res = await fetch(`${habynexUrl}/api/ai/generate-faq`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ listingId }),
