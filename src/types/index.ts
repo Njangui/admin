@@ -214,6 +214,23 @@ export interface KpiSnapshot {
   active_agents: number; visits_completed: number
 }
 
+// ── Visiteurs (analytics, non-inscrits) ──────────────────────────
+export interface SiteVisit {
+  id: number; visitor_id: string; user_id: string | null
+  path: string; referrer: string | null; user_agent: string | null
+  device_type: string | null; country: string | null; city: string | null
+  utm_source: string | null; utm_medium: string | null; utm_campaign: string | null
+  created_at: string
+}
+
+export interface SiteVisitorSummary {
+  visitor_id: string; first_seen_at: string; last_seen_at: string
+  visit_count: number; logged_in_visit_count: number
+  last_known_user_id: string | null
+  last_path: string | null; last_device_type: string | null
+  last_country: string | null; last_city: string | null; last_referrer: string | null
+}
+
 // ── Paramètres app ───────────────────────────────────────────────
 export interface AppSettings {
   visit_price_1: number; visit_price_2: number; visit_price_3: number
