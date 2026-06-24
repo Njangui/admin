@@ -1,231 +1,316 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import { Eye, Users, TrendingUp, Calendar, RefreshCw } from 'lucide-react'
+import { Eye, Users as UsersIcon, Smartphone, Monitor, Tablet, Globe, TrendingUp, Clock, MapPin, Home } from 'lucide-react'
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { createClient } from '@/lib/supabase/client'
-import { StatCard, LoadingSpinner } from '@/components/ui/index'
-import { formatDate } from '@/lib/utils/index'
+import { StatCard, LoadingSpinner, Badge } from '@/components/ui/index'
+import { formatDate, timeAgo, cn } from '@/lib/utils/index'
+import type { SiteVisitorSummary } from '@/types/index'
 
-interface DayStats {
-  date: string
-  total: number
-  unique: number
+const DEVICE_ICONS: Record<string, any> = {
+  mobile: Smartphone, desktop: Monitor, tablet: Tablet,
 }
 
-interface VisitorStats {
-  today: number
-  uniqueToday: number
-  last7Days: number
-  uniqueLast7Days: number
-  last30Days: number
-  uniqueLast30Days: number
-  dailyBreakdown: DayStats[]
+const RANGES = [
+  { value: 1, label: "Aujourd'hui" },
+  { value: 7, label: '7 jours' },
+  { value: 30, label: '30 jours' },
+]
+
+interface Stats {
+  totalVisits: number
+  uniqueVisitors: number
+  anonymousVisitors: number
+  topPages: { path: string; count: number }[]
+  topDevices: { device: string; count: number }[]
+  topGeo: { country: string; city: string; count: number }[]
+  hourly: { hour: number; count: number }[]
+  topListings: { listing_id: string; title: string; count: number }[]
 }
 
 export function VisiteursTab() {
   const supabase = createClient()
-  const [stats, setStats] = useState<VisitorStats | null>(null)
   const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
+  const [range, setRange] = useState(7)
+  const [stats, setStats] = useState<Stats | null>(null)
+  const [visitors, setVisitors] = useState<SiteVisitorSummary[]>([])
+  const [onlyAnonymous, setOnlyAnonymous] = useState(false)
 
   const load = useCallback(async () => {
-    const today = new Date().toISOString().split('T')[0]
-    const ago7 = new Date(Date.now() - 7 * 86400000).toISOString()
-    const ago30 = new Date(Date.now() - 30 * 86400000).toISOString()
+    setLoading(true)
+    const since = new Date(Date.now() - range * 24 * 60 * 60 * 1000).toISOString()
 
-    const [
-      { data: todayData },
-      { data: last7Data },
-      { data: last30Data },
-    ] = await Promise.all([
-      supabase
-        .from('site_visits')
-        .select('visitor_id, created_at')
-        .gte('created_at', `${today}T00:00:00`)
-        .limit(10000),
-      supabase
-        .from('site_visits')
-        .select('visitor_id, created_at')
-        .gte('created_at', ago7)
-        .limit(50000),
-      supabase
-        .from('site_visits')
-        .select('visitor_id, created_at')
-        .gte('created_at', ago30)
-        .limit(100000),
+    const [{ data: visits, count: totalVisits }, { data: summary }] = await Promise.all([
+      supabase.from('site_visits')
+        .select('visitor_id, user_id, path, device_type, country, city, listing_id, created_at', { count: 'exact' })
+        .gte('created_at', since)
+        .order('created_at', { ascending: false })
+        .limit(3000),
+      supabase.from('site_visitors_summary')
+        .select('*')
+        .order('last_seen_at', { ascending: false })
+        .limit(200),
     ])
 
-    // Build daily breakdown from last 7 days data
-    const dayMap: Record<string, { total: number; visitors: Set<string> }> = {}
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date(Date.now() - i * 86400000).toISOString().split('T')[0]
-      dayMap[d] = { total: 0, visitors: new Set() }
-    }
-    ;(last7Data ?? []).forEach((v: any) => {
-      const d = v.created_at?.split('T')[0]
-      if (d && dayMap[d]) {
-        dayMap[d].total++
-        if (v.visitor_id) dayMap[d].visitors.add(v.visitor_id)
-      }
+    const v = visits ?? []
+    const uniqueVisitorIds = new Set(v.map(r => r.visitor_id))
+    const anonymousIds = new Set(v.filter(r => !r.user_id).map(r => r.visitor_id))
+
+    const pathCounts: Record<string, number> = {}
+    const deviceCounts: Record<string, number> = {}
+    const geoCounts: Record<string, { country: string; city: string; count: number }> = {}
+    const hourCounts: Record<number, number> = {}
+    const listingCounts: Record<string, number> = {}
+
+    v.forEach(r => {
+      pathCounts[r.path] = (pathCounts[r.path] ?? 0) + 1
+      const d = r.device_type ?? 'inconnu'
+      deviceCounts[d] = (deviceCounts[d] ?? 0) + 1
+
+      const country = r.country ?? 'Inconnu'
+      const city = r.city ?? 'Inconnu'
+      const geoKey = `${country}__${city}`
+      if (!geoCounts[geoKey]) geoCounts[geoKey] = { country, city, count: 0 }
+      geoCounts[geoKey].count++
+
+      const hour = new Date(r.created_at).getHours()
+      hourCounts[hour] = (hourCounts[hour] ?? 0) + 1
+
+      if (r.listing_id) listingCounts[r.listing_id] = (listingCounts[r.listing_id] ?? 0) + 1
     })
 
-    const dailyBreakdown: DayStats[] = Object.entries(dayMap).map(([date, val]) => ({
-      date,
-      total: val.total,
-      unique: val.visitors.size,
-    }))
+    const topPages = Object.entries(pathCounts)
+      .sort((a, b) => b[1] - a[1]).slice(0, 5)
+      .map(([path, count]) => ({ path, count }))
+    const topDevices = Object.entries(deviceCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([device, count]) => ({ device, count }))
+    const topGeo = Object.values(geoCounts)
+      .sort((a, b) => b.count - a.count).slice(0, 6)
+
+    const hourly = Array.from({ length: 24 }, (_, h) => ({ hour: h, count: hourCounts[h] ?? 0 }))
+
+    let topListings: Stats['topListings'] = []
+    const listingIds = Object.entries(listingCounts).sort((a, b) => b[1] - a[1]).slice(0, 5)
+    if (listingIds.length > 0) {
+      const { data: listingsData } = await supabase
+        .from('listings')
+        .select('id, title')
+        .in('id', listingIds.map(([id]) => id))
+      topListings = listingIds.map(([id, count]) => ({
+        listing_id: id,
+        title: listingsData?.find(l => l.id === id)?.title ?? 'Annonce supprimée',
+        count,
+      }))
+    }
 
     setStats({
-      today: (todayData ?? []).length,
-      uniqueToday: new Set((todayData ?? []).map((v: any) => v.visitor_id).filter(Boolean)).size,
-      last7Days: (last7Data ?? []).length,
-      uniqueLast7Days: new Set((last7Data ?? []).map((v: any) => v.visitor_id).filter(Boolean)).size,
-      last30Days: (last30Data ?? []).length,
-      uniqueLast30Days: new Set((last30Data ?? []).map((v: any) => v.visitor_id).filter(Boolean)).size,
-      dailyBreakdown,
+      totalVisits: totalVisits ?? v.length,
+      uniqueVisitors: uniqueVisitorIds.size,
+      anonymousVisitors: anonymousIds.size,
+      topPages, topDevices, topGeo, hourly, topListings,
     })
-  }, [])
+    setVisitors(summary ?? [])
+    setLoading(false)
+  }, [range])
 
-  useEffect(() => {
-    setLoading(true)
-    load().finally(() => setLoading(false))
-  }, [load])
+  useEffect(() => { load() }, [load])
 
-  async function handleRefresh() {
-    setRefreshing(true)
-    await load()
-    setRefreshing(false)
-  }
+  const filteredVisitors = onlyAnonymous
+    ? visitors.filter(v => !v.last_known_user_id)
+    : visitors
 
-  if (loading) return <LoadingSpinner />
-
-  const maxVisits = Math.max(...(stats?.dailyBreakdown.map(d => d.total) ?? [1]), 1)
+  const peakHour = stats?.hourly.reduce((max, h) => h.count > max.count ? h : max, { hour: 0, count: 0 })
 
   return (
-    <div className="space-y-6">
-      {/* Refresh button */}
-      <div className="flex justify-end">
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors disabled:opacity-50"
-        >
-          <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
-          Actualiser
-        </button>
+    <div className="space-y-5">
+      {/* Sélecteur de période */}
+      <div className="flex gap-2">
+        {RANGES.map(r => (
+          <button key={r.value} onClick={() => setRange(r.value)}
+            className={cn('px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors',
+              range === r.value
+                ? 'bg-[#f95d1e] text-white border-[#f95d1e]'
+                : 'bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 text-gray-500 hover:border-gray-300')}>
+            {r.label}
+          </button>
+        ))}
       </div>
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-        <StatCard
-          title="Vues aujourd'hui"
-          value={stats?.today ?? 0}
-          sub={`${stats?.uniqueToday ?? 0} visiteur${(stats?.uniqueToday ?? 0) > 1 ? 's' : ''} unique${(stats?.uniqueToday ?? 0) > 1 ? 's' : ''}`}
-          icon={Eye}
-          color="bg-[#f95d1e]"
-        />
-        <StatCard
-          title="Vues (7 jours)"
-          value={stats?.last7Days ?? 0}
-          sub={`${stats?.uniqueLast7Days ?? 0} visiteurs uniques`}
-          icon={TrendingUp}
-          color="bg-blue-500"
-        />
-        <StatCard
-          title="Vues (30 jours)"
-          value={stats?.last30Days ?? 0}
-          sub={`${stats?.uniqueLast30Days ?? 0} visiteurs uniques`}
-          icon={Users}
-          color="bg-purple-500"
-        />
-      </div>
-
-      {/* Daily bar chart */}
-      <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 p-5">
-        <div className="flex items-center gap-2 mb-5">
-          <Calendar size={15} className="text-gray-400" />
-          <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
-            Pages vues — 7 derniers jours
-          </h3>
-        </div>
-
-        {stats?.dailyBreakdown.length === 0 ? (
-          <div className="text-center py-10 text-gray-400 text-sm">Aucune donnée disponible</div>
-        ) : (
-          <div className="flex items-end gap-2 h-32">
-            {stats?.dailyBreakdown.map((day) => {
-              const heightPct = maxVisits > 0 ? (day.total / maxVisits) * 100 : 0
-              const label = new Date(day.date + 'T12:00:00').toLocaleDateString('fr-FR', {
-                weekday: 'short',
-                day: 'numeric',
-              })
-              return (
-                <div key={day.date} className="flex-1 flex flex-col items-center gap-1 group relative">
-                  {/* Tooltip */}
-                  <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded-lg px-2 py-1 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
-                    {day.total} vues · {day.unique} uniques
-                  </div>
-                  <div className="w-full flex items-end" style={{ height: '96px' }}>
-                    <div
-                      className="w-full rounded-t-lg bg-[#f95d1e]/80 hover:bg-[#f95d1e] transition-colors"
-                      style={{ height: `${Math.max(heightPct, day.total > 0 ? 4 : 0)}%` }}
-                    />
-                  </div>
-                  <span className="text-[10px] text-gray-400 text-center leading-tight">{label}</span>
-                </div>
-              )
-            })}
+      {loading || !stats ? <LoadingSpinner /> : (
+        <>
+          {/* Stats globales */}
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <StatCard title="Pages vues" value={stats.totalVisits} icon={Eye} color="bg-blue-500"
+              sub={`sur ${range === 1 ? "aujourd'hui" : `les ${range} derniers jours`}`} />
+            <StatCard title="Visiteurs uniques" value={stats.uniqueVisitors} icon={UsersIcon} color="bg-[#f95d1e]"
+              sub="appareils/sessions distincts" />
+            <StatCard title="Visiteurs non-inscrits" value={stats.anonymousVisitors} icon={Globe} color="bg-purple-500"
+              sub="jamais connectés" />
+            <StatCard title="Heure de pointe" value={peakHour ? `${peakHour.hour}h - ${peakHour.hour + 1}h` : '—'} icon={Clock} color="bg-green-500"
+              sub={peakHour ? `${peakHour.count} vues` : 'pas assez de données'} />
           </div>
-        )}
 
-        {/* Legend */}
-        <div className="flex items-center gap-4 mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
-          <div className="flex items-center gap-1.5">
-            <div className="w-3 h-3 rounded bg-[#f95d1e]/80" />
-            <span className="text-xs text-gray-400">Pages vues</span>
+          {/* Répartition horaire */}
+          <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 p-5">
+            <p className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-3 flex items-center gap-2">
+              <Clock size={15} className="text-[#f95d1e]" /> Répartition par heure de la journée
+            </p>
+            {stats.totalVisits === 0 ? (
+              <p className="text-xs text-gray-400">Aucune donnée</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={stats.hourly}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} className="opacity-20" />
+                  <XAxis dataKey="hour" tickFormatter={h => `${h}h`} tick={{ fontSize: 11 }} interval={1} />
+                  <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                  <Tooltip formatter={(value: number) => [`${value} vues`, '']} labelFormatter={h => `${h}h - ${Number(h) + 1}h`} />
+                  <Bar dataKey="count" fill="#f95d1e" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
-          <div className="ml-auto text-xs text-gray-400">
-            Moy. {stats ? Math.round(stats.last7Days / 7) : 0} vues/jour
-          </div>
-        </div>
-      </div>
 
-      {/* Daily breakdown table */}
-      <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100 dark:border-gray-800">
-          <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Détail par jour</h3>
-        </div>
-        <div className="divide-y divide-gray-50 dark:divide-gray-800">
-          {stats?.dailyBreakdown.slice().reverse().map((day) => (
-            <div key={day.date} className="px-5 py-3 flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {new Date(day.date + 'T12:00:00').toLocaleDateString('fr-FR', {
-                    weekday: 'long',
-                    day: 'numeric',
-                    month: 'long',
-                  })}
-                </p>
-              </div>
-              <div className="flex items-center gap-6 text-sm">
-                <div className="text-right">
-                  <p className="font-semibold text-gray-800 dark:text-white">{day.total}</p>
-                  <p className="text-xs text-gray-400">pages vues</p>
+          {/* Pages populaires + appareils */}
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 p-5">
+              <p className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-3 flex items-center gap-2">
+                <TrendingUp size={15} className="text-[#f95d1e]" /> Pages les plus visitées
+              </p>
+              {stats.topPages.length === 0 ? (
+                <p className="text-xs text-gray-400">Aucune donnée</p>
+              ) : (
+                <div className="space-y-2">
+                  {stats.topPages.map(p => (
+                    <div key={p.path} className="flex items-center justify-between gap-3 text-sm">
+                      <span className="text-gray-600 dark:text-gray-300 truncate font-mono text-xs">{p.path}</span>
+                      <span className="text-gray-400 text-xs flex-shrink-0">{p.count} vues</span>
+                    </div>
+                  ))}
                 </div>
-                <div className="text-right">
-                  <p className="font-semibold text-gray-800 dark:text-white">{day.unique}</p>
-                  <p className="text-xs text-gray-400">visiteurs uniques</p>
-                </div>
-              </div>
+              )}
             </div>
-          ))}
-          {(!stats?.dailyBreakdown || stats.dailyBreakdown.every(d => d.total === 0)) && (
-            <div className="px-5 py-10 text-center text-sm text-gray-400">
-              <p className="text-3xl mb-2">📊</p>
-              Aucune visite enregistrée sur les 7 derniers jours
+
+            <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 p-5">
+              <p className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-3 flex items-center gap-2">
+                <Smartphone size={15} className="text-[#f95d1e]" /> Appareils
+              </p>
+              {stats.topDevices.length === 0 ? (
+                <p className="text-xs text-gray-400">Aucune donnée</p>
+              ) : (
+                <div className="space-y-2">
+                  {stats.topDevices.map(d => {
+                    const Icon = DEVICE_ICONS[d.device] ?? Globe
+                    const pct = stats.totalVisits > 0 ? Math.round((d.count / stats.totalVisits) * 100) : 0
+                    return (
+                      <div key={d.device} className="flex items-center gap-3 text-sm">
+                        <Icon size={14} className="text-gray-400 flex-shrink-0" />
+                        <span className="text-gray-600 dark:text-gray-300 capitalize flex-1">{d.device}</span>
+                        <span className="text-gray-400 text-xs">{d.count} ({pct}%)</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Géographie + Annonces les plus consultées */}
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 p-5">
+              <p className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-3 flex items-center gap-2">
+                <MapPin size={15} className="text-[#f95d1e]" /> Pays / Villes
+              </p>
+              {stats.topGeo.length === 0 ? (
+                <p className="text-xs text-gray-400">Aucune donnée</p>
+              ) : (
+                <div className="space-y-2">
+                  {stats.topGeo.map(g => {
+                    const pct = stats.totalVisits > 0 ? Math.round((g.count / stats.totalVisits) * 100) : 0
+                    return (
+                      <div key={`${g.country}-${g.city}`} className="flex items-center justify-between gap-3 text-sm">
+                        <span className="text-gray-600 dark:text-gray-300 truncate">
+                          {g.city !== 'Inconnu' ? `${g.city}, ` : ''}{g.country}
+                        </span>
+                        <span className="text-gray-400 text-xs flex-shrink-0">{g.count} ({pct}%)</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 p-5">
+              <p className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-3 flex items-center gap-2">
+                <Home size={15} className="text-[#f95d1e]" /> Annonces les plus consultées
+              </p>
+              {stats.topListings.length === 0 ? (
+                <p className="text-xs text-gray-400">Aucune donnée</p>
+              ) : (
+                <div className="space-y-2">
+                  {stats.topListings.map(l => (
+                    <div key={l.listing_id} className="flex items-center justify-between gap-3 text-sm">
+                      <span className="text-gray-600 dark:text-gray-300 truncate">{l.title}</span>
+                      <span className="text-gray-400 text-xs flex-shrink-0">{l.count} vues</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Liste des visiteurs */}
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+              Derniers visiteurs ({filteredVisitors.length})
+            </p>
+            <label className="flex items-center gap-2 text-xs text-gray-500 cursor-pointer">
+              <input type="checkbox" checked={onlyAnonymous} onChange={e => setOnlyAnonymous(e.target.checked)}
+                className="rounded accent-[#f95d1e]" />
+              Afficher uniquement les non-inscrits
+            </label>
+          </div>
+
+          {filteredVisitors.length === 0 ? (
+            <div className="text-center py-16 bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800">
+              <p className="text-4xl mb-3">👁️</p>
+              <p className="text-gray-500">Aucun visiteur enregistré</p>
+              <p className="text-xs text-gray-400 mt-1">Le suivi démarre dès qu'un visiteur consulte le site</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filteredVisitors.map(v => {
+                const Icon = DEVICE_ICONS[v.last_device_type ?? ''] ?? Globe
+                return (
+                  <div key={v.visitor_id} className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 px-4 py-3 flex items-center gap-4">
+                    <div className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center flex-shrink-0">
+                      <Icon size={15} className="text-gray-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-semibold text-gray-700 dark:text-gray-200 font-mono">
+                          {v.visitor_id.slice(0, 12)}…
+                        </p>
+                        {v.last_known_user_id
+                          ? <Badge label="Inscrit" color="bg-green-100 text-green-700 dark:bg-green-950/40 dark:text-green-400" />
+                          : <Badge label="Visiteur anonyme" color="bg-gray-100 text-gray-500 dark:bg-gray-800" />}
+                      </div>
+                      <div className="flex items-center gap-3 mt-0.5 text-xs text-gray-400 flex-wrap">
+                        <span className="font-mono">{v.last_path}</span>
+                        {v.last_city && <span>📍 {v.last_city}{v.last_country ? `, ${v.last_country}` : ''}</span>}
+                      </div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">{v.visit_count} vue{v.visit_count > 1 ? 's' : ''}</p>
+                      <p className="text-xs text-gray-400">{timeAgo(v.last_seen_at)}</p>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           )}
-        </div>
-      </div>
+        </>
+      )}
     </div>
   )
 }
