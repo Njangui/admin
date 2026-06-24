@@ -8,11 +8,13 @@ import { formatPrice, formatDate, cn } from '@/lib/utils/index'
 import toast from 'react-hot-toast'
 
 const STATUS_LABELS: Record<string,string> = {
-  pending_payment:'En attente paiement', paid:'Payée', scheduled:'Planifiée',
+  pending_verification:'À vérifier', pending_payment:'En attente paiement',
+  paid:'Payée', scheduled:'Planifiée',
   confirmed:'Confirmée', reminder_sent:'Rappel envoyé', completed:'Effectuée',
   cancelled:'Annulée', refunded:'Remboursée'
 }
 const STATUS_COLORS: Record<string,string> = {
+  pending_verification:'bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300',
   pending_payment:'bg-gray-100 text-gray-500 dark:bg-gray-800',
   paid:'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400',
   scheduled:'bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-400',
@@ -101,6 +103,53 @@ export function ReservationsPage() {
       }
     }
     toast.success('Visite marquée comme effectuée ✅')
+    await load(); setProcessing(null)
+  }
+
+  async function verifyPayment(bookingId: string) {
+    if (!confirm('Confirmer ce paiement MoMo et passer la réservation à "Payée" ?')) return
+    setProcessing(bookingId)
+    const booking = bookings.find(b => b.id === bookingId)
+    await supabase.from('visit_bookings').update({
+      status: 'paid',
+      paid_at: new Date().toISOString(),
+    }).eq('id', bookingId)
+
+    // Notifier le client
+    if (booking?.client_id) {
+      await supabase.from('notifications').insert({
+        user_id:    booking.client_id,
+        title:      '✅ Paiement confirmé !',
+        body:       `Votre réservation de ${booking.nb_listings} visite(s) est confirmée. Un agent va vous être assigné.`,
+        action_url: '/profil?tab=visites',
+        channel:    'in_app',
+      })
+    }
+    toast.success('Paiement confirmé ✅')
+    await load(); setProcessing(null)
+  }
+
+  async function rejectPayment(bookingId: string) {
+    const reason = prompt('Raison du rejet (ex: référence invalide, montant incorrect) :')
+    if (reason === null) return
+    setProcessing(bookingId)
+    const booking = bookings.find(b => b.id === bookingId)
+    await supabase.from('visit_bookings').update({
+      status:        'cancelled',
+      refund_reason: reason || 'Paiement non vérifié',
+    }).eq('id', bookingId)
+
+    // Notifier le client
+    if (booking?.client_id) {
+      await supabase.from('notifications').insert({
+        user_id:    booking.client_id,
+        title:      '❌ Paiement non confirmé',
+        body:       `Votre paiement n'a pas pu être vérifié${reason ? ` : ${reason}` : ''}. Contactez-nous si besoin.`,
+        action_url: '/profil?tab=visites',
+        channel:    'in_app',
+      })
+    }
+    toast.success('Réservation rejetée')
     await load(); setProcessing(null)
   }
 
@@ -201,8 +250,56 @@ export function ReservationsPage() {
 
                 {isExpanded && (
                   <div className="px-5 pb-5 border-t border-gray-100 dark:border-gray-800 pt-4 space-y-4">
+                    {/* ── Vérification paiement MoMo ── */}
+                    {b.status === 'pending_verification' && (
+                      <div className="bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 rounded-xl p-4 space-y-3">
+                        <p className="text-xs font-bold text-purple-700 dark:text-purple-300 uppercase tracking-wide">
+                          Vérification paiement MoMo
+                        </p>
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <span className="text-gray-400">Opérateur</span>
+                            <p className="font-bold text-gray-800 dark:text-white uppercase mt-0.5">
+                              {b.payment_method === 'mtn' ? '🟡 MTN MoMo' : b.payment_method === 'orange' ? '🟠 Orange Money' : b.payment_method ?? '—'}
+                            </p>
+                          </div>
+                          <div>
+                            <span className="text-gray-400">Montant attendu</span>
+                            <p className="font-bold text-gray-800 dark:text-white mt-0.5">{formatPrice(b.amount_paid, true)}</p>
+                          </div>
+                        </div>
+                        {b.payment_ref && (
+                          <div>
+                            <span className="text-xs text-gray-400">Référence client</span>
+                            <p className="font-mono font-bold text-sm text-purple-700 dark:text-purple-300 bg-purple-100 dark:bg-purple-950/40 px-3 py-2 rounded-xl mt-1 tracking-widest">
+                              {b.payment_ref}
+                            </p>
+                          </div>
+                        )}
+                        <p className="text-xs text-gray-400">
+                          Vérifiez dans votre application {b.payment_method?.toUpperCase()} que vous avez bien reçu {formatPrice(b.amount_paid, true)} avec cette référence.
+                        </p>
+                        <div className="flex gap-2 pt-1">
+                          <button
+                            onClick={() => verifyPayment(b.id)}
+                            disabled={processing === b.id}
+                            className="flex-1 py-2.5 bg-green-500 hover:bg-green-600 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 disabled:opacity-50 transition-colors">
+                            {processing === b.id ? <Loader2 size={13} className="animate-spin"/> : <CheckCircle2 size={13}/>}
+                            Confirmer le paiement
+                          </button>
+                          <button
+                            onClick={() => rejectPayment(b.id)}
+                            disabled={processing === b.id}
+                            className="flex-1 py-2.5 border-2 border-red-300 dark:border-red-800 text-red-500 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 hover:bg-red-50 dark:hover:bg-red-950/20 disabled:opacity-50 transition-colors">
+                            <AlertCircle size={13}/>
+                            Rejeter
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Info paiement */}
-                    {b.payment_ref && (
+                    {b.payment_ref && b.status !== 'pending_verification' && (
                       <div className="bg-gray-50 dark:bg-gray-800 rounded-xl px-3 py-2 text-xs text-gray-500">
                         Réf. paiement: <span className="font-mono text-gray-700 dark:text-gray-300">{b.payment_ref}</span>
                         {b.paid_at && <span> · Payé le {formatDate(b.paid_at)}</span>}
