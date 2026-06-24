@@ -97,8 +97,9 @@ export function FaqEditor({ listingId, listingTitle, onClose }: FaqEditorProps) 
         setFaqId(null)
       }
 
-      // ⚠️ Cette route est sur habynex (pas sur admin) — on doit appeler l'URL absolue
-      const habynexUrl = process.env.NEXT_PUBLIC_HABYNEX_URL ?? 'https://habynex.com'
+      // ⚠️ Cette route est sur habynex (pas sur admin)
+      // Utiliser www.habynex.com pour éviter la redirection 308 de Vercel
+      const habynexUrl = process.env.NEXT_PUBLIC_HABYNEX_URL ?? 'https://www.habynex.com'
       const res = await fetch(`${habynexUrl}/api/ai/generate-faq`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
