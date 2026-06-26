@@ -157,19 +157,21 @@ export function ReservationsPage() {
     if (!confirm('Confirmer le remboursement ?')) return
     setProcessing(bookingId)
     const booking = bookings.find(b => b.id === bookingId)
+    const { data: { user: admin } } = await supabase.auth.getUser()
     await supabase.from('visit_bookings').update({
-      status: 'refunded', refunded: true, refund_reason: 'Remboursement admin'
+      status: 'refunded',
+      refunded: true,
+      refund_reason: 'Remboursement admin',
+      refunded_at: new Date().toISOString(),
+      refunded_by: admin?.id ?? null,
     }).eq('id', bookingId)
-    // Restituer les visites gratuites si c'était une visite gratuite
+    // Restituer la visite gratuite si c'était une visite gratuite — via la
+    // fonction RPC atomique (pas de select+update séparés qui pourraient
+    // se chevaucher avec une autre opération sur le même solde).
     if (booking?.is_free && booking?.client_id) {
-      const { data: profile } = await supabase.from('profiles').select('free_visits_balance').eq('id', booking.client_id).single()
-      if (profile) {
-        await supabase.from('profiles').update({
-          free_visits_balance: (profile.free_visits_balance ?? 0) + 1
-        }).eq('id', booking.client_id)
-      }
+      await supabase.rpc('increment_free_visits', { user_id: booking.client_id })
     }
-    toast.success('Remboursement enregistré')
+    toast.success('Remboursement enregistré — pensez à reverser l\'argent au client en MoMo si le paiement était payant.')
     await load(); setProcessing(null)
   }
 
